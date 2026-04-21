@@ -7,6 +7,7 @@ void ServerConnection() {
     // 模块A的具体逻辑
 }
 
+
 void Stm32Connection() {
     std::cout << "Stm32Connection running in thread " << std::this_thread::get_id() << std::endl;
     // 模块B的具体逻辑
