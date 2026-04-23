@@ -1,5 +1,5 @@
-#include "../api/cv_model_api.h"
 #include "../include/cv_model_manager.h"
+#include "../api/cv_model_api.h"
 
 bool IsCvModelReady()
 {
@@ -8,22 +8,22 @@ bool IsCvModelReady()
 
 void StartStaticRecognition()
 {
-    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(DETECT_ACTIVE);
+    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(RECOGNITION_SWITCH_ON);
 }
 
 void StartDynamicRecognition()
 {
-    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(DETECT_ACTIVE);
+    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(RECOGNITION_SWITCH_ON);
 }
 
 void StopStaticRecognition()
 {
-    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(DETECT_DEACTIVE);
+    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(RECOGNITION_SWITCH_OFF);
 }
 
 void StopDynamicRecognition()
 {
-    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(DETECT_DEACTIVE);
+    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(RECOGNITION_SWITCH_OFF);
 }
 
 bool IsStaticRecognitionIdle()

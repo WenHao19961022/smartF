@@ -3,11 +3,6 @@
 
 #include <cstdint> // 包含cstdint头文件以使用固定宽度整数类型
 
-const static bool DETECT_ACTIVE = true; // 定义一个常量，表示检测是否激活
-const static bool DETECT_DEACTIVE = false; // 定义一个常量，表示检测是否不激活
-const static bool RECOGNITION_IDLE = true; // 定义一个常量，表示识别是否完成
-const static bool RECOGNITION_BUSY = false; // 定义一个常量，表示识别是否正在进行中
-
 // 水果枚举
 enum class FruitType : uint8_t {
     APPLE  = 0,

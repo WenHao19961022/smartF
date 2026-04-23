@@ -6,6 +6,13 @@
 #include <atomic>
 #include <future>
 
+const static bool INITI_FINISHED = true; // 定义一个常量，表示初始化是否完成
+const static bool INITI_UNFINISHED = false; // 定义一个常量，表示初始化是否未完成
+const static bool RECOGNITION_SWITCH_ON = true; // 定义一个常量，表示检测是否激活
+const static bool RECOGNITION_SWITCH_OFF = false; // 定义一个常量，表示检测是否不激活
+const static bool RECOGNITION_IDLE = true; // 定义一个常量，表示识别是否完成
+const static bool RECOGNITION_BUSY = false; // 定义一个常量，表示识别是否正在进行中
+
 /**
  * @brief 计算机视觉模型管理类 (单例)
  * 针对 Jetson Xavier 优化：增加线程安全保护与异步任务管理
@@ -55,13 +62,13 @@ private:
     void SetDynamicRecognitionStatus(bool status) { m_dynamicecognitionStatus.store(status); }
 
     // 标志位使用原子变量，确保多线程读取安全
-    std::atomic<bool> m_initFinished{false};
-    std::atomic<bool> m_staticRecognitionSwitch{DETECT_DEACTIVE};
-    std::atomic<bool> m_dynamicecognitionSwitch{DETECT_DEACTIVE};
+    std::atomic<bool> m_initFinished{INITI_UNFINISHED};
+    std::atomic<bool> m_staticRecognitionSwitch{RECOGNITION_SWITCH_OFF};
+    std::atomic<bool> m_dynamicecognitionSwitch{RECOGNITION_SWITCH_OFF};
     std::atomic<bool> m_staticRecognitionStatus{RECOGNITION_IDLE};
     std::atomic<bool> m_dynamicecognitionStatus{RECOGNITION_IDLE};
 
-    void CvModelReady() { m_initFinished.store(true); }
+    void CvModelReady() { m_initFinished.store(INITI_FINISHED); }
 
     // 结果数据与保护锁
     std::mutex m_dataMutex;

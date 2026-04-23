@@ -5,16 +5,20 @@
 #include <../../cv_model/api/cv_model_api.h> // 包含cv_model_api.h头文件以使用其中定义的结构体和函数声明
 #include <../../stm32_message_recever/api/stm32_message_recever_api.h> // 包含stm32_api.h头文件以使用其中定义的结构体和函数声明
 
-const static bool SEND_ACTIVE = true; // 定义一个常量，表示发送是否激活
-const static bool SEND_INACTIVE = false; // 定义一个常量，表示发送是否不激活
+struct FruitInfoWithWeight
+{
+    FruitInfo fruitInfo; // 水果的基本信息
+    uint32_t weight; // 水果的重量
+};
 
 struct MqttMessageStruct
 {
     uint32_t time;
     uint32_t messageId;
-    uint32_t fridgeId;
+    uint32_t deviceId;
     FrigeratorInfo fridgeInfo;
-    StaticRecognitionResult recognitionResult;
+    uint8_t fruitCount; // 识别到的水果数量
+    FruitInfoWithWeight fruits[10]; // 识别到的水果信息数组，假设最多识别10个水果
 };
 
 // 服务器连接相关的函数声明
