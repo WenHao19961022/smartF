@@ -1,5 +1,6 @@
 #include <iostream>
 #include <thread>
+#include "../include/core_manager.h"
 
 // 模块函数声明
 void ConnectServer() {
@@ -21,6 +22,9 @@ void CvModel() {
 void Core() {
     std::cout << "Core running in thread " << std::this_thread::get_id() << std::endl;
     // 主线程具体逻辑
+    CoreManager manager;
+    manager.init();
+    manager.run();
 }
 
 int main() {
