@@ -24,18 +24,12 @@ public:
     // CvModelManager主循环函数，负责处理识别任务和状态更新
     void MainLoop();
 
-    // 内部核心处理逻辑(线程一次只做一个任务，避免资源竞争)
-    void StaticRecognitionInternal();
-    void DynamicRecognitionInternal();
-
     // 状态查询
     bool IsCvModelReady() const { return m_initFinished.load(); }
-    bool IsStaticRecognitionBusy() const { return m_staticActive.load(); }
-    bool IsDynamicRecognitionBusy() const { return m_dynamicActive.load(); }
-
-    // 设置标准位，供与core通讯
-    void SetStaticRecognitionStatus(bool status) { m_staticActive.store(status); }
-    void SetDynamicRecognitionStatus(bool status) { m_dynamicActive.store(status); }
+    bool IsStaticRecognitionIdle() const { return m_staticRecognitionStatus.load(); }
+    bool IsDynamicRecognitionIdle() const { return m_dynamicecognitionStatus.load(); }
+    void SetStaticRecognitionSwitch(bool active) { m_staticRecognitionSwitch.store(active); }
+    void SetDynamicRecognitionSwitch(bool active) { m_dynamicecognitionSwitch.store(active); }
 
     // 结果获取 (增加互斥锁保护数据一致性)
     StaticRecognitionResult GetStaticResult();
@@ -50,10 +44,22 @@ private:
     CvModelManager(const CvModelManager&) = delete;
     CvModelManager& operator=(const CvModelManager&) = delete;
 
+    // 内部核心处理逻辑(线程一次只做一个任务，避免资源竞争)
+    void StaticRecognitionInternal();
+    void DynamicRecognitionInternal();
+
+    // 设置标准位，供与core通讯
+    bool IsStaticRecognitionSwitchOn() const { return m_staticRecognitionSwitch.load(); }
+    bool IsDynamicRecognitionSwitchOn() const { return m_dynamicecognitionSwitch.load(); }
+    void SetStaticRecognitionStatus(bool status) { m_staticRecognitionStatus.store(status); }
+    void SetDynamicRecognitionStatus(bool status) { m_dynamicecognitionStatus.store(status); }
+
     // 标志位使用原子变量，确保多线程读取安全
     std::atomic<bool> m_initFinished{false};
-    std::atomic<bool> m_staticActive{false};
-    std::atomic<bool> m_dynamicActive{false};
+    std::atomic<bool> m_staticRecognitionSwitch{DETECT_DEACTIVE};
+    std::atomic<bool> m_dynamicecognitionSwitch{DETECT_DEACTIVE};
+    std::atomic<bool> m_staticRecognitionStatus{RECOGNITION_IDLE};
+    std::atomic<bool> m_dynamicecognitionStatus{RECOGNITION_IDLE};
 
     void CvModelReady() { m_initFinished.store(true); }
 

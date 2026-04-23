@@ -15,8 +15,10 @@ CvModelManager::~CvModelManager()
 void CvModelManager::CvModelInit()
 {
     std::atomic<bool> m_initFinished{false};
-    std::atomic<bool> m_staticActive{false};
-    std::atomic<bool> m_dynamicActive{false};
+    std::atomic<bool> m_staticRecognitionSwitch{DETECT_DEACTIVE};
+    std::atomic<bool> m_dynamicecognitionSwitch{DETECT_DEACTIVE};
+    std::atomic<bool> m_staticRecognitionStatus{RECOGNITION_IDLE};
+    std::atomic<bool> m_dynamicecognitionStatus{RECOGNITION_IDLE};
 
     m_dataMutex.lock();
     m_staticResult = {};
