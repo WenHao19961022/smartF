@@ -12,7 +12,7 @@ CvModelManager::~CvModelManager()
     CvModelInit();
 }
 
-bool CvModelManager::CvModelInit()
+void CvModelManager::CvModelInit()
 {
     std::atomic<bool> m_initFinished{false};
     std::atomic<bool> m_staticActive{false};
@@ -22,6 +22,9 @@ bool CvModelManager::CvModelInit()
     m_staticResult = {};
     m_dynamicResult = {};
     m_dataMutex.unlock();
+
+    CvModelReady();
+    return;
 }
 
 CvModelManager& CvModelManager::GetInstance()
