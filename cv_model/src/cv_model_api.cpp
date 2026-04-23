@@ -8,22 +8,32 @@ bool IsCvModelReady()
 
 void StartStaticRecognition()
 {
-    return CvModelManager::GetInstance().SetStaticRecognitionStatus(DETECT_ACTIVE);
+    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(DETECT_ACTIVE);
 }
 
 void StartDynamicRecognition()
 {
-    return CvModelManager::GetInstance().SetDynamicRecognitionStatus(DETECT_ACTIVE);
+    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(DETECT_ACTIVE);
 }
 
-bool IsStaticRecognitionComplete()
+void StopStaticRecognition()
 {
-    return CvModelManager::GetInstance().IsStaticRecognitionBusy();
+    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(DETECT_DEACTIVE);
 }
 
-bool IsDynamicRecognitionComplete()
+void StopDynamicRecognition()
 {
-    return CvModelManager::GetInstance().IsDynamicRecognitionBusy();
+    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(DETECT_DEACTIVE);
+}
+
+bool IsStaticRecognitionIdle()
+{
+    return CvModelManager::GetInstance().IsStaticRecognitionIdle();
+}
+
+bool IsDynamicRecognitionIdle()
+{
+    return CvModelManager::GetInstance().IsDynamicRecognitionIdle();
 }
 
 // 读取静态识别结果的函数，core可以调用该函数获取最新的静态识别结果
