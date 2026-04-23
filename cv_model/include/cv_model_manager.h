@@ -19,7 +19,7 @@ public:
     static CvModelManager& GetInstance();
 
     // 模型初始化（建议在程序启动时显式调用一次）
-    bool CvModelInit();
+    void CvModelInit();
 
     // CvModelManager主循环函数，负责处理识别任务和状态更新
     void MainLoop();
@@ -32,6 +32,10 @@ public:
     bool IsCvModelReady() const { return m_initFinished.load(); }
     bool IsStaticRecognitionBusy() const { return m_staticActive.load(); }
     bool IsDynamicRecognitionBusy() const { return m_dynamicActive.load(); }
+
+    // 设置标准位，供与core通讯
+    void SetStaticRecognitionStatus(bool status) { m_staticActive.store(status); }
+    void SetDynamicRecognitionStatus(bool status) { m_dynamicActive.store(status); }
 
     // 结果获取 (增加互斥锁保护数据一致性)
     StaticRecognitionResult GetStaticResult();
@@ -46,14 +50,12 @@ private:
     CvModelManager(const CvModelManager&) = delete;
     CvModelManager& operator=(const CvModelManager&) = delete;
 
-    // 设置标准位，供外部查询
-    void SetStaticRecognitionStatus(bool status) { m_staticActive.store(status); }
-    void SetDynamicRecognitionStatus(bool status) { m_dynamicActive.store(status); }
-
     // 标志位使用原子变量，确保多线程读取安全
     std::atomic<bool> m_initFinished{false};
     std::atomic<bool> m_staticActive{false};
     std::atomic<bool> m_dynamicActive{false};
+
+    void CvModelReady() { m_initFinished.store(true); }
 
     // 结果数据与保护锁
     std::mutex m_dataMutex;

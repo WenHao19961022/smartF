@@ -8,12 +8,12 @@ bool IsCvModelReady()
 
 void StartStaticRecognition()
 {
-    return CvModelManager::GetInstance().StaticRecognitionInternal();
+    return CvModelManager::GetInstance().SetStaticRecognitionStatus(DETECT_ACTIVE);
 }
 
 void StartDynamicRecognition()
 {
-    return CvModelManager::GetInstance().DynamicRecognitionInternal();
+    return CvModelManager::GetInstance().SetDynamicRecognitionStatus(DETECT_ACTIVE);
 }
 
 bool IsStaticRecognitionComplete()
