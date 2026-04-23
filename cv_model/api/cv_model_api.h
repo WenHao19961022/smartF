@@ -3,6 +3,9 @@
 
 #include <cstdint> // 包含cstdint头文件以使用固定宽度整数类型
 
+const static bool DETECT_ACTIVE = true; // 定义一个常量，表示检测是否激活
+const static bool DETECT_INACTIVE = false; // 定义一个常量，表示检测是否不激活
+
 // 水果枚举
 enum class FruitType {
     APPLE = 0,
