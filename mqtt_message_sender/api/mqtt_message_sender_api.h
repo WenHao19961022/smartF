@@ -5,12 +5,6 @@
 #include <../../cv_model/api/cv_model_api.h> // 包含cv_model_api.h头文件以使用其中定义的结构体和函数声明
 #include <../../stm32_message_recever/api/stm32_message_recever_api.h> // 包含stm32_api.h头文件以使用其中定义的结构体和函数声明
 
-struct FruitInfoWithWeight
-{
-    FruitInfo fruitInfo; // 水果的基本信息
-    uint32_t weight; // 水果的重量
-};
-
 struct MqttMessageStruct
 {
     uint32_t time;
@@ -18,7 +12,7 @@ struct MqttMessageStruct
     uint32_t deviceId;
     FrigeratorInfo fridgeInfo;
     uint8_t fruitCount; // 识别到的水果数量
-    FruitInfoWithWeight fruits[10]; // 识别到的水果信息数组，假设最多识别10个水果
+    FruitInfoWithWeight fruits[MAX_STATIC_FRUIT_COUNT]; // 识别到的水果信息数组，假设最多识别10个水果
 };
 
 // 服务器连接相关的函数声明

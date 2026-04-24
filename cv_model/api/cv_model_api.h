@@ -3,6 +3,9 @@
 
 #include <cstdint> // 包含cstdint头文件以使用固定宽度整数类型
 
+const uint8_t MAX_STATIC_FRUIT_COUNT = 10; // 定义一个常量，表示最大识别水果数量
+const uint8_t MAX_DYNAMIC_FRUIT_COUNT = 5; // 定义一个常量，表示动态识别最大识别水果数量
+
 // 水果枚举
 enum class FruitType : uint8_t {
     APPLE  = 0,
@@ -28,18 +31,29 @@ struct FruitInfo {
     // 其他水果相关的数据成员
 };
 
+struct FruitInfoWithWeight
+{
+    FruitInfo fruitInfo; // 水果的基本信息
+    uint32_t weight; // 水果的重量
+};
+
+struct FruitInfoWithTimestamp {
+    uint32_t timestamp; // 识别结果的时间戳
+    FruitInfo fruitInfo; // 水果的基本信息
+    // 其他水果相关的数据成员
+};
+
 // 静态识别数据传输结构体定义
 struct StaticRecognitionResult {
     uint32_t timestamp; // 识别结果的时间戳
     uint8_t fruitCount; // 识别到的水果数量
-    FruitInfo fruits[10]; // 识别到的水果信息数组，假设最多识别10个水果
+    FruitInfo fruits[MAX_STATIC_FRUIT_COUNT]; // 识别到的水果信息数组，假设最多识别10个水果
 };
 
 // 动态识别数据传输结构体定义
 struct DynamicRecognitionResult {
     uint8_t fruitCount; // 识别到的水果数量
-    uint32_t timestamp[5]; // 识别结果的时间戳
-    FruitInfo fruits[5]; // 识别到的水果信息数组，假设最多识别5个水果
+    FruitInfoWithTimestamp fruitInfoWithTimestamp[MAX_DYNAMIC_FRUIT_COUNT]; // 识别到的水果信息数组，假设最多识别5个水果
     // 其他动态识别相关的数据成员
 };
 

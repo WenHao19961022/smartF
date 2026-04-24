@@ -56,6 +56,7 @@ void MessageSenderManager::MainLoop()
             m_dataMutex.unlock();
 
             uint8_t messageSendCount = 0; // 发送次数
+            uint8_t maxMessageSendCount = 3; // 最大发送次数
             while (true)
             {
                 if (SendMessage(messageToSend))
@@ -63,7 +64,7 @@ void MessageSenderManager::MainLoop()
                     break; // 发送成功，退出循环
                 }
                 messageSendCount++;
-                if (messageSendCount >= 3) // 超过3次发送失败，放弃发送
+                if (messageSendCount >= maxMessageSendCount) // 超过最大发送次数，放弃发送
                 {
                     break;
                 }
