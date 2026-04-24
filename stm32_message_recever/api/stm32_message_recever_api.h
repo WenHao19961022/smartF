@@ -3,7 +3,7 @@
 
 #include <cstdint> // 包含cstdint头文件以使用固定宽度整数类型
 
-const uint8_t FRIGERATOR_HISTORY_INFO_SIZE = 5; // 定义一个常量，表示冰箱历史信息的大小
+const static uint8_t FRIGERATOR_HISTORY_INFO_SIZE = 5; // 定义一个常量，表示冰箱历史信息的大小
 
 // 门状态枚举
 enum class DoorStatus : uint16_t {

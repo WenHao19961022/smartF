@@ -7,9 +7,9 @@
 
 const static bool INITI_FINISHED = true; // 定义一个常量，表示初始化是否完成
 const static bool INITI_UNFINISHED = false; // 定义一个常量，表示初始化是否未完成
-const uint16_t WEIGHT_CHANGE_THRESHOLD = 100; // 定义一个常量，表示记录冰箱状态信息的重量变化阈值
-const uint16_t TEMPERATURE_CHANGE_THRESHOLD = 1; // 定义一个常量，表示记录冰箱状态信息的温度变化阈值
-const uint16_t HUMIDITY_CHANGE_THRESHOLD = 5; // 定义一个常量，表示记录冰箱状态信息的湿度变化阈值
+const static uint16_t WEIGHT_CHANGE_THRESHOLD = 100; // 定义一个常量，表示记录冰箱状态信息的重量变化阈值
+const static uint16_t TEMPERATURE_CHANGE_THRESHOLD = 1; // 定义一个常量，表示记录冰箱状态信息的温度变化阈值
+const static uint16_t HUMIDITY_CHANGE_THRESHOLD = 5; // 定义一个常量，表示记录冰箱状态信息的湿度变化阈值
 
 class MessageReceverManager
 {

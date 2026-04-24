@@ -3,8 +3,8 @@
 
 #include <cstdint> // 包含cstdint头文件以使用固定宽度整数类型
 
-const uint8_t MAX_STATIC_FRUIT_COUNT = 10; // 定义一个常量，表示最大识别水果数量
-const uint8_t MAX_DYNAMIC_FRUIT_COUNT = 5; // 定义一个常量，表示动态识别最大识别水果数量
+const static uint8_t MAX_STATIC_FRUIT_COUNT = 10; // 定义一个常量，表示最大识别水果数量
+const static uint8_t MAX_DYNAMIC_FRUIT_COUNT = 5; // 定义一个常量，表示动态识别最大识别水果数量
 
 // 水果枚举
 enum class FruitType : uint8_t {
