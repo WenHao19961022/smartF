@@ -18,13 +18,12 @@ public:
     // 获取MessageSenderManager实例的静态方法
     static MessageSenderManager& GetInstance();
 
-    void Init(); // 初始化方法，建议在程序启动时显式调用一次
+    void SenderInit(); // 初始化方法，建议在程序启动时显式调用一次
 
     bool IsSenderReady() const { return m_initFinished.load(); } // 检查发送器是否准备就绪
     bool IsMessageSenderIdle() const { return m_isSenderIdle.load(); } // 检查发送器是否空闲，供与core通讯
+    void CopyMessage(const MqttMessageStruct& message); // 复制core带过来的消息到message_sender内部，供发送线程使用
     void SetMessageSendSwitch(bool flag) { m_messageSendSwitchOn.store(flag); } // 设置发送开关，供与core通讯
-
-    bool CopyMessage(const MqttMessageStruct& message); // 复制core带过来的消息到message_sender内部，供发送线程使用
 
     // 发送功能主循环
     void MainLoop();
@@ -50,11 +49,9 @@ private:
     std::atomic<bool> m_isSenderIdle{SENDER_IDLE};
     std::atomic<bool> m_messageSendSwitchOn{MESSAGE_SEND_SWITCH_OFF};
 
-
     //发送的信息
     std::mutex m_dataMutex;
     MqttMessageStruct m_message;
 };
-
 
 #endif // MESSAGE_SENDER_MANAGER_H

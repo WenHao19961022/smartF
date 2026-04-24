@@ -10,7 +10,7 @@ const static bool INITI_FINISHED = true; // 定义一个常量，表示初始化
 const static bool INITI_UNFINISHED = false; // 定义一个常量，表示初始化是否未完成
 const static bool RECOGNITION_SWITCH_ON = true; // 定义一个常量，表示检测是否激活
 const static bool RECOGNITION_SWITCH_OFF = false; // 定义一个常量，表示检测是否不激活
-const static bool RECOGNITION_IDLE = true; // 定义一个常量，表示识别是否完成
+const static bool RECOGNITION_IDLE = true; // 定义一个常量，表示识别线程空闲
 const static bool RECOGNITION_BUSY = false; // 定义一个常量，表示识别是否正在进行中
 
 /**
