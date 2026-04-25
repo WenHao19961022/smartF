@@ -21,13 +21,20 @@ struct FrigeratorInfo
 
 struct FrigeratorInfoWithTimestamp
 {
-    uint32_t timestamp; // 记录时间戳，单位为秒
-    FrigeratorInfo info; // 冰箱状态信息
+    uint32_t timestamp;
+    FrigeratorInfo info;
 };
 
 struct FrigeratorHistoryInfo
 {
-    FrigeratorInfoWithTimestamp frigeratorInfoWithTimestamp[FRIGERATOR_HISTORY_INFO_SIZE]; // 存储最近5次的冰箱状态信息,主要用于记录冰箱内水果重量变化(超过一定数量才记录)
+    uint32_t temperatureTimestamp[FRIGERATOR_HISTORY_INFO_SIZE];
+    uint32_t humidityTimestamp[FRIGERATOR_HISTORY_INFO_SIZE];
+    uint32_t weightTimestamp[FRIGERATOR_HISTORY_INFO_SIZE];
+    uint32_t doorStatusTimestamp[FRIGERATOR_HISTORY_INFO_SIZE];
+    uint16_t temperature[FRIGERATOR_HISTORY_INFO_SIZE];
+    uint16_t humidity[FRIGERATOR_HISTORY_INFO_SIZE];
+    uint16_t weight[FRIGERATOR_HISTORY_INFO_SIZE];
+    DoorStatus doorStatus[FRIGERATOR_HISTORY_INFO_SIZE]; // 0表示门关闭，1表示门打开
 };
 
 FrigeratorHistoryInfo GetFrigeratorInfo(); // 获取冰箱信息的函数，core可以调用该函数获取最新的冰箱状态信息
