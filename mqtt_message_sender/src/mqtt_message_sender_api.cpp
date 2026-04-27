@@ -29,3 +29,10 @@ bool SendMqttMessage(const MqttMessageStruct& message)
     }
     return false;
 }
+
+void MqttMessageSenderMainLoop()
+{
+    // 这里应该包含实际处理发送MQTT消息的逻辑，例如定时发送消息或根据特定事件触发发送消息
+    // 由于这是一个示例，我们暂时调用MessageSenderManager的MainLoop方法来处理发送消息的逻辑
+    MessageSenderManager::GetInstance().MainLoop();
+}

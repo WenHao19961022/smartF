@@ -29,7 +29,6 @@ private:
     void ReceverReady() { m_initFinished.store(INITI_FINISHED); } // 设置接收器准备就绪的标志位
 
     FrigeratorInfoWithTimestamp GetLatestFrigeratorInfo(); // 获取最新的冰箱状态信息的方法
-    bool IsFrigeratorInfoChanged(FrigeratorInfoWithTimestamp& newInfo); // 判断冰箱状态信息是否发生变化的方法
     void UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimestamp& newInfo); // 更新冰箱历史信息的方法
 
     // 数据
