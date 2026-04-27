@@ -1,6 +1,17 @@
 #include "../include/core_manager.h"
 #include <iostream>
 #include <thread>
+#include <cstdlib>
+#include <ctime>
+
+// 初始化随机数种子
+namespace {
+    struct RandomSeedInitializer {
+        RandomSeedInitializer() {
+            srand(static_cast<unsigned int>(time(nullptr)));
+        }
+    } randomSeedInitializer;
+}
 
 void CoreManager::init() {
     FrigeratorHistoryInfo initial_info = GetFrigeratorInfo();
@@ -30,7 +41,7 @@ void CoreManager::run() {
             last_door_state_ = current_door_state;
         }
 
-        if (is_static_waiting_ && IsStaticRecognitionComplete() && !current_door_state) {
+        if (is_static_waiting_ && IsStaticRecognitionIdle() && !current_door_state) {
             ProcessStaticResultOnly();
         }
 
@@ -50,13 +61,13 @@ void CoreManager::HandleDoorOpen() {
 void CoreManager::HandleDoorClose() {
     StopDynamicRecognition(); 
     
-    while (!IsDynamicRecognitionComplete()) {
+    while (!IsDynamicRecognitionIdle()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     DynamicRecognitionResult dyn_res = GetDynamicRecognitionResult();
 
     StartStaticRecognition();
-    while (!IsStaticRecognitionComplete()) {
+    while (!IsStaticRecognitionIdle()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     StaticRecognitionResult static_res = GetStaticRecognitionResult();
@@ -71,7 +82,13 @@ void CoreManager::HandleDoorClose() {
     MqttMessageStruct mqtt_msg;
     mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
-    mqtt_msg.messageId = ++message_id_counter_;   ///////需要重定义 类似时间+随机数
+    // 生成时间戳+随机数格式的messageId
+    uint32_t timestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
+    // 生成0-9999的随机数
+    uint32_t random = rand() % 10000;
+    // 组合时间戳和随机数，确保在uint32_t范围内
+    mqtt_msg.messageId = (timestamp * 10000) + random;
     mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
     
     // 最新硬件状态透传
@@ -103,7 +120,13 @@ void CoreManager::ProcessStaticResultOnly() {
     MqttMessageStruct mqtt_msg;
     mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
-    mqtt_msg.messageId = ++message_id_counter_;
+    // 生成时间戳+随机数格式的messageId
+    uint32_t timestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
+    // 生成0-9999的随机数
+    uint32_t random = rand() % 10000;
+    // 组合时间戳和随机数，确保在uint32_t范围内
+    mqtt_msg.messageId = (timestamp * 10000) + random;
     mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
     mqtt_msg.fridgeInfo = GetFrigeratorInfo().historyInfo[4];
     mqtt_msg.finalResult = final_inventory;
