@@ -16,7 +16,7 @@ class MessageReceverManager
 public:
     static MessageReceverManager& GetInstance(); // 获取MessageReceverManager实例的静态方法
     void ReceverInit(); // 初始化方法，建议在程序启动时显式调用一次
-    bool IsReceverReady() const { return m_initFinished.load(); } // 检查接收器是否准备就绪，供与core通讯
+    bool IsReceverReady() const { return m_initStatus.load(); } // 检查接收器是否准备就绪，供与core通讯
     void MainLoop(); // 接收功能主循环
     FrigeratorHistoryInfo GetFrigeratorHistoryInfo(); // 获取冰箱历史信息的方法，供与core通讯
 
@@ -26,13 +26,13 @@ private:
     MessageReceverManager(const MessageReceverManager&) = delete; // 禁止复制构造函数，确保单例模式
     MessageReceverManager& operator=(const MessageReceverManager&) = delete; // 禁止赋值运算符，确保单例模式
 
-    void ReceverReady() { m_initFinished.store(INITI_FINISHED); } // 设置接收器准备就绪的标志位
+    void ReceverReady() { m_initStatus.store(INITI_FINISHED); } // 设置接收器准备就绪的标志位
 
     FrigeratorInfoWithTimestamp GetLatestFrigeratorInfo(); // 获取最新的冰箱状态信息的方法
     void UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimestamp& newInfo); // 更新冰箱历史信息的方法
 
     // 数据
-    std::atomic<bool> m_initFinished{INITI_UNFINISHED};
+    std::atomic<bool> m_initStatus{INITI_UNFINISHED};
     std::mutex m_dataMutex;
     FrigeratorHistoryInfo m_historyInfo; // 冰箱历史信息,最后一个信息是最新的状态信息
 };

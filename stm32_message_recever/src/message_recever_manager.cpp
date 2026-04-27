@@ -20,7 +20,7 @@ MessageReceverManager::~MessageReceverManager()
 
 void MessageReceverManager::ReceverInit()
 {
-    m_initFinished.store(INITI_UNFINISHED);
+    m_initStatus.store(INITI_UNFINISHED);
 
     m_dataMutex.lock();
     m_historyInfo = {};

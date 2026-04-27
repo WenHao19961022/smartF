@@ -19,9 +19,9 @@ MessageSenderManager::~MessageSenderManager()
 
 void MessageSenderManager::SenderInit()
 {
-    m_initFinished.store(INITI_UNFINISHED);
-    m_isSenderIdle.store(SENDER_IDLE);
-    m_messageSendSwitchOn.store(MESSAGE_SEND_SWITCH_OFF);
+    m_initStatus.store(INITI_UNFINISHED);
+    m_SenderIdleStatus.store(SENDER_IDLE);
+    m_messageSendSwitch.store(MESSAGE_SEND_SWITCH_OFF);
 
     m_dataMutex.lock();
     m_message = {};

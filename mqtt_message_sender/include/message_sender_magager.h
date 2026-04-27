@@ -20,10 +20,10 @@ public:
 
     void SenderInit(); // 初始化方法，建议在程序启动时显式调用一次
 
-    bool IsSenderReady() const { return m_initFinished.load(); } // 检查发送器是否准备就绪
-    bool IsMessageSenderIdle() const { return m_isSenderIdle.load(); } // 检查发送器是否空闲，供与core通讯
+    bool IsSenderReady() const { return m_initStatus.load(); } // 检查发送器是否准备就绪
+    bool IsMessageSenderIdle() const { return m_SenderIdleStatus.load(); } // 检查发送器是否空闲，供与core通讯
     void CopyMessage(const MqttMessageStruct& message); // 复制core带过来的消息到message_sender内部，供发送线程使用
-    void SetMessageSendSwitch(bool flag) { m_messageSendSwitchOn.store(flag); } // 设置发送开关，供与core通讯
+    void SetMessageSendSwitch(bool flag) { m_messageSendSwitch.store(flag); } // 设置发送开关，供与core通讯
 
     // 发送功能主循环
     void MainLoop();
@@ -40,14 +40,14 @@ private:
     // 发送消息的方法，接受一个MqttMessageStruct类型的参数
     bool SendMessage(const MqttMessageStruct& message);
 
-    void MessageSenderReady() { m_isSenderIdle.store(INITI_FINISHED); } // 设置发送器准备就绪的标志位
-    bool IsMessageSendSwitchOn() const { return m_messageSendSwitchOn.load(); } // 检查发送开关状态
-    void SetMessageSenderStatus(bool idle) { m_isSenderIdle.store(idle); } // 设置发送器空闲状态的标志位
+    void MessageSenderReady() { m_initStatus.store(INITI_FINISHED); } // 设置发送器准备就绪的标志位
+    bool IsMessageSendSwitchOn() const { return m_messageSendSwitch.load(); } // 检查发送开关状态
+    void SetMessageSenderStatus(bool idle) { m_SenderIdleStatus.store(idle); } // 设置发送器空闲状态的标志位
 
     // 标志位使用原子变量，确保多线程读取安全
-    std::atomic<bool> m_initFinished{INITI_UNFINISHED};
-    std::atomic<bool> m_isSenderIdle{SENDER_IDLE};
-    std::atomic<bool> m_messageSendSwitchOn{MESSAGE_SEND_SWITCH_OFF};
+    std::atomic<bool> m_initStatus{INITI_UNFINISHED};
+    std::atomic<bool> m_SenderIdleStatus{SENDER_IDLE};
+    std::atomic<bool> m_messageSendSwitch{MESSAGE_SEND_SWITCH_OFF};
 
     //发送的信息
     std::mutex m_dataMutex;

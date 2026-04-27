@@ -32,7 +32,7 @@ public:
     void MainLoop();
 
     // 状态查询
-    bool IsCvModelReady() const { return m_initFinished.load(); }
+    bool IsCvModelReady() const { return m_initStatus.load(); }
     bool IsStaticRecognitionIdle() const { return m_staticRecognitionStatus.load(); }
     bool IsDynamicRecognitionIdle() const { return m_dynamicecognitionStatus.load(); }
     void SetStaticRecognitionSwitch(bool active) { m_staticRecognitionSwitch.store(active); }
@@ -62,18 +62,18 @@ private:
     void SetDynamicRecognitionStatus(bool status) { m_dynamicecognitionStatus.store(status); }
 
     // 标志位使用原子变量，确保多线程读取安全
-    std::atomic<bool> m_initFinished{INITI_UNFINISHED};
+    std::atomic<bool> m_initStatus{INITI_UNFINISHED};
     std::atomic<bool> m_staticRecognitionSwitch{RECOGNITION_SWITCH_OFF};
     std::atomic<bool> m_dynamicecognitionSwitch{RECOGNITION_SWITCH_OFF};
     std::atomic<bool> m_staticRecognitionStatus{RECOGNITION_IDLE};
     std::atomic<bool> m_dynamicecognitionStatus{RECOGNITION_IDLE};
 
-    void CvModelReady() { m_initFinished.store(INITI_FINISHED); }
+    void CvModelReady() { m_initStatus.store(INITI_FINISHED); }
 
     // 结果数据与保护锁
     std::mutex m_dataMutex;
-    StaticRecognitionResult m_staticResult;
-    DynamicRecognitionResult m_dynamicResult;
+    StaticRecognitionResult m_staticRecognitionResult;
+    DynamicRecognitionResult m_dynamicRecognitionResult;
 };
 
 #endif // CV_MODEL_MANAGER_H
