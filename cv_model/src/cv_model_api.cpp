@@ -8,16 +8,11 @@ bool IsCvModelReady()
 
 void StartStaticRecognition()
 {
-<<<<<<< HEAD
     return CvModelManager::GetInstance().SetStaticRecognitionSwitch(RECOGNITION_SWITCH_ON);
-=======
-    return CvModelManager::GetInstance().SetStaticRecognitionStatus(true);
->>>>>>> 89325f4... zbhFixStartDynamicRecognition
 }
 
 void StartDynamicRecognition()
 {
-<<<<<<< HEAD
     return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(RECOGNITION_SWITCH_ON);
 }
 
@@ -29,9 +24,6 @@ void StopStaticRecognition()
 void StopDynamicRecognition()
 {
     return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(RECOGNITION_SWITCH_OFF);
-=======
-    return CvModelManager::GetInstance().SetDynamicRecognitionStatus(true);
->>>>>>> 89325f4... zbhFixStartDynamicRecognition
 }
 
 bool IsStaticRecognitionIdle()
