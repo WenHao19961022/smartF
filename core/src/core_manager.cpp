@@ -3,93 +3,110 @@
 #include <thread>
 
 void CoreManager::init() {
+    FrigeratorHistoryInfo initial_info = GetFrigeratorInfo();
+    last_door_state_ = initial_info.historyInfo[4].doorStatus == 1;
     last_static_time_ = std::chrono::steady_clock::now();
-    last_gate_state_ = 0; // 假设初始状态门是关的
-    current_state_ = SystemState::IDLE;
-    std::cout << "[Core] 统一 API 架构核心管理器初始化完成." << std::endl;
+    
+    while (!IsCvModelReady()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    std::cout << "[Core] 就绪接管！" << std::endl;
 }
 
 void CoreManager::run() {
     while (running_) {
-        // 1. 纯 API 调用：从 STM32 获取最新门状态
-        auto fridge_info = GetFrigeratorInfo();
-        int current_gate_state = fridge_info.doorStatus;
+        // 实时获取底层硬件状态（以最新的一次为准）
+        FrigeratorHistoryInfo curr_info = GetFrigeratorInfo();
+        bool current_door_state = curr_info.historyInfo[4].doorStatus == 1;
 
-        // 2. 检测状态跳变并切换状态机
-        handleStateTransition(current_gate_state);
+        if (current_door_state != last_door_state_) {               // 门状态变化，触发对应事件
+            if (current_door_state == true) {                       // 开门事件
+                // 记录开门瞬间的重量作为基准
+                base_weight_ = curr_info.historyInfo[4].weight; 
+                HandleDoorOpen();
+            } else {
+                HandleDoorClose();                                  // 关门事件
+            }
+            last_door_state_ = current_door_state;
+        }
 
-        // 3. 执行当前状态下该做的事
-        processCurrentState();
+        if (is_static_waiting_ && IsStaticRecognitionComplete() && !current_door_state) {
+            ProcessStaticResultOnly();
+        }
 
-        // 4. 检查是否有定时任务
-        checkRoutineTimers();
+        if (!current_door_state && !is_static_waiting_) {
+            CheckTimers();
+        }
 
-        // 5. 必须休眠一段时间，防止 while(true) 跑满 Jetson 的 CPU
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 
-void CoreManager::handleStateTransition(int current_gate_state) {
-    // 检测到开门 (上升沿)
-    if (current_gate_state == 1 && last_gate_state_ == 0) {
-        std::cout << "[Core] 发现门开，调用 API 启动动态检测..." << std::endl;
-        StartDynamicRecognition(); // 调用 cv_model_api
-        current_state_ = SystemState::DOOR_OPEN_DYNAMIC;
-    }
-    // 检测到关门 (下降沿)
-    else if (current_gate_state == 0 && last_gate_state_ == 1) {
-        std::cout << "[Core] 发现门关，调用 API 停止动态并启动静态检测..." << std::endl;
-        StartStaticRecognition(); // 调用 cv_model_api
-        current_state_ = SystemState::DOOR_CLOSED_STATIC;
-        last_static_time_ = std::chrono::steady_clock::now(); // 重置定时器
-    }
+void CoreManager::HandleDoorOpen() {
+    is_static_waiting_ = false; 
+    StartDynamicRecognition();
+}
+
+void CoreManager::HandleDoorClose() {
+    StopDynamicRecognition(); 
     
-    last_gate_state_ = current_gate_state;
+    while (!IsDynamicRecognitionComplete()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DynamicRecognitionResult dyn_res = GetDynamicRecognitionResult();
+
+    StartStaticRecognition();
+    while (!IsStaticRecognitionComplete()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    StaticRecognitionResult static_res = GetStaticRecognitionResult();
+    
+    // 关门后获取完整的历史重量过程
+    FrigeratorHistoryInfo history = GetFrigeratorInfo();
+
+    // 核心调用：传入三模态数据进行融合修缮
+    StaticRecognitionResult final_inventory = inventory_manager_.SettleInventory(
+        static_res, dyn_res, history, base_weight_);
+
+    MqttMessageStruct mqtt_msg;
+    mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+    mqtt_msg.messageId = ++message_id_counter_;   ///////需要重定义 类似时间+随机数
+    mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
+    
+    // 最新硬件状态透传
+    mqtt_msg.fridgeInfo = history.historyInfo[4]; 
+    mqtt_msg.recognitionResult = final_inventory;
+
+    SendMqttMessage(mqtt_msg);
+    last_static_time_ = std::chrono::steady_clock::now();
 }
 
-void CoreManager::processCurrentState() {
-    switch (current_state_) {
-        case SystemState::IDLE:
-            // 待机状态，无需特别操作
-            break;
-
-        case SystemState::DOOR_OPEN_DYNAMIC:
-            // 门开着，持续查询 CV 动态识别状态
-            if (IsDynamicRecognitionComplete()) {
-                std::cout << "[Core] 动态识别已完成，门仍然开着，将继续保持动态识别状态..." << std::endl;
-                StartDynamicRecognition();
-            }
-            break;
-
-        case SystemState::DOOR_CLOSED_STATIC:
-            // 纯 API 轮询：不断查问 CV 静态识别做完没
-            if (IsStaticRecognitionComplete()) {
-                std::cout << "[Core] 静态扫描完成，打包数据上传 Server..." << std::endl;
-                
-                // 1. 获取视觉结果
-                auto static_res = GetStaticRecognitionResult();
-                
-                // 2. 获取称重结果 (假设 stm32_api 提供了 GetWeight)
-                // float weight = GetWeight(); 
-                
-                // 3. 调用 Server API 上传
-                // UploadData(json_payload); 
-                
-                // 处理完毕，切回待机状态
-                current_state_ = SystemState::IDLE;
-            }
-            break;
+void CoreManager::CheckTimers() {
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_static_time_) >= STATIC_INTERVAL) {
+        StartStaticRecognition();
+        is_static_waiting_ = true;
+        last_static_time_ = now;
     }
 }
 
-void CoreManager::checkRoutineTimers() {
-    if (current_state_ == SystemState::IDLE) {
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_static_time_) >= STATIC_INTERVAL) {
-            std::cout << "[Core] 定时器触发，调用 API 启动例行静态检测." << std::endl;
-            StartStaticRecognition();
-            current_state_ = SystemState::DOOR_CLOSED_STATIC; // 切换状态等待结果
-            last_static_time_ = now;
-        }
-    }
+void CoreManager::ProcessStaticResultOnly() {
+    is_static_waiting_ = false;
+    StaticRecognitionResult static_res = GetStaticRecognitionResult();
+    DynamicRecognitionResult empty_dyn_res = {0}; 
+    FrigeratorHistoryInfo empty_history = {0};
+
+    StaticRecognitionResult final_inventory = inventory_manager_.SettleInventory(
+        static_res, empty_dyn_res, empty_history, GetFrigeratorInfo().historyInfo[4].weight);
+    
+    MqttMessageStruct mqtt_msg;
+    mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+    mqtt_msg.messageId = ++message_id_counter_;
+    mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
+    mqtt_msg.fridgeInfo = GetFrigeratorInfo().historyInfo[4];
+    mqtt_msg.finalResult = final_inventory;
+
+    SendMqttMessage(mqtt_msg);
 }
