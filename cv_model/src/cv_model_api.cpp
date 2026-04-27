@@ -1,6 +1,11 @@
 #include "../include/cv_model_manager.h"
 #include "../api/cv_model_api.h"
 
+void CvModelMainLoop()
+{
+    CvModelManager::GetInstance().MainLoop();
+}
+
 bool IsCvModelReady()
 {
     return CvModelManager::GetInstance().IsCvModelReady();

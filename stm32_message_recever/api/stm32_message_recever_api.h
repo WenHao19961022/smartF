@@ -39,6 +39,6 @@ struct FrigeratorHistoryInfo
 
 FrigeratorHistoryInfo GetFrigeratorInfo(); // 获取冰箱信息的函数，core可以调用该函数获取最新的冰箱状态信息
 
-void stm32_message_recever_mainLoop(); // 主循环函数，core可以调用该函数来处理接收到的消息
+void Stm32MessageReceverMainLoop(); // 主循环函数，core可以调用该函数来处理接收到的消息
 
 #endif // STM32_MESSAGE_RECEVER_API_H
