@@ -1,2 +1,0 @@
-/usr/bin/ar qc libcv_model_lib.a  CMakeFiles/cv_model_lib.dir/src/cv_model_api.cpp.o CMakeFiles/cv_model_lib.dir/src/cv_model_manager.cpp.o
-/usr/bin/ranlib libcv_model_lib.a

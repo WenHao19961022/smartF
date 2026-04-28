@@ -31,7 +31,7 @@ FinalInventory InventoryManager::SettleInventory(
 
     // 2. 时序对齐：遍历 CV 动态记录，寻找相近时间的重量变化
     for (uint8_t i = 0; i < dyn_res.fruitCount; ++i) {
-        FruitType type = dyn_res.fruits[i].fruitInfo.fruitType; 
+        FruitType type = dyn_res.fruitInfoWithTimestamp[i].fruitInfo.fruitType; 
         uint32_t cv_ts = dyn_res.fruitInfoWithTimestamp[i].timestamp; // 根据API结构调整
         
         int16_t matched_weight = 0;
