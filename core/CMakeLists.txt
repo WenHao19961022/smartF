@@ -1,5 +1,5 @@
 # 搜集主程序源文件
-file(GLOB CORE_SOURCES "*.cpp")
+file(GLOB CORE_SOURCES "src/*.cpp")
 
 # 生成可执行文件
 add_executable(smart_fridge_app ${CORE_SOURCES})

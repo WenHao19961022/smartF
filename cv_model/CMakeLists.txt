@@ -28,5 +28,6 @@ target_include_directories(cv_model_lib
 target_link_libraries(cv_model_lib 
     PRIVATE 
         ${OpenCV_LIBS}
-        # 如果你后续使用 TensorRT，在这里添加 nvinfer
+        # 可选 TensorRT 支持
+        $<$<TARGET_EXISTS:3rd_tensorrt>:3rd_tensorrt>
 )
