@@ -2,8 +2,8 @@
 #define MQTT_MESSAGE_SENDER_API_H
 
 #include <cstdint> // 包含cstdint头文件以使用固定宽度整数类型
-#include <../../cv_model/api/cv_model_api.h> // 包含cv_model_api.h头文件以使用其中定义的结构体和函数声明
-#include <../../stm32_message_recever/api/stm32_message_recever_api.h> // 包含stm32_api.h头文件以使用其中定义的结构体和函数声明
+#include "cv_model_api.h" // 使用模块 API 头，不依赖相对路径搜索
+#include "stm32_message_recever_api.h" // 使用模块 API 头，不依赖相对路径搜索
 
 struct MqttMessageStruct
 {

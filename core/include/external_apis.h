@@ -5,3 +5,4 @@
 #include "mqtt_message_sender_api.h"
 
 #define EXTERNAL_APIS_H
+#endif // EXTERNAL_APIS_H
