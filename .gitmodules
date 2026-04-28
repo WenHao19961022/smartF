@@ -1,0 +1,6 @@
+[submodule "third_part/mqtt/paho.mqtt.c"]
+	path = third_part/mqtt/paho.mqtt.c
+	url = https://gitee.com/mirrors/paho.mqtt.c.git
+[submodule "third_part/mqtt/third_part/mqtt/paho.mqtt.cpp"]
+	path = third_part/mqtt/third_part/mqtt/paho.mqtt.cpp
+	url = https://gitclone.com/github.com/eclipse/paho.mqtt.cpp.git
