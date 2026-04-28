@@ -1,22 +1,21 @@
 #include <iostream>
 #include <thread>
-#include "../include/core_manager.h"
+#include "../include/external_apis.h"
 
 // 模块函数声明
-void ConnectServer() {
-    std::cout << "ConnectServer running in thread " << std::this_thread::get_id() << std::endl;
-    // 服务器连接线程具体逻辑
+void LaunchMqttMessageSender() {
+    std::cout << "MqttMessageSender running in thread " << std::this_thread::get_id() << std::endl;
+    MqttMessageSenderMainLoop();
 }
 
-
-void ConnectStm32() {
-    std::cout << "ConnectStm32 running in thread " << std::this_thread::get_id() << std::endl;
-    // stm32连接具体逻辑
+void LaunchStm32MessageReceiver() {
+    std::cout << "Stm32MessageReceiver running in thread " << std::this_thread::get_id() << std::endl;
+    Stm32MessageReceverMainLoop();
 }
 
-void CvModel() {
+void LaunchCvModel() {
     std::cout << "CvModel running in thread " << std::this_thread::get_id() << std::endl;
-    // 视觉模块具体逻辑
+    CvModelMainLoop();
 }
 
 void Core() {
@@ -29,9 +28,9 @@ void Core() {
 
 int main() {
     // 创建4个线程，每个线程运行一个模块
-    std::thread t1(ConnectServer);
-    std::thread t2(ConnectStm32);
-    std::thread t3(CvModel);
+    std::thread t1(LaunchMqttMessageSender);
+    std::thread t2(LaunchStm32MessageReceiver);
+    std::thread t3(LaunchCvModel);
     std::thread t4(Core);
 
     // 等待所有线程结束
