@@ -36,3 +36,12 @@ void MqttMessageSenderMainLoop()
     // 由于这是一个示例，我们暂时调用MessageSenderManager的MainLoop方法来处理发送消息的逻辑
     MessageSenderManager::GetInstance().MainLoop();
 }
+
+bool EnqueueMqttMessage(const MqttMessageStruct& message)
+{
+    if (!(MessageSenderManager::GetInstance().IsSenderReady())) {
+        return false;
+    }
+    MessageSenderManager::GetInstance().EnqueueMessage(message);
+    return true;
+}

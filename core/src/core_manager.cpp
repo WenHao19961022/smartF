@@ -75,9 +75,14 @@ void CoreManager::HandleDoorClose() {
     // 关门后获取完整的历史重量过程
     FrigeratorHistoryInfo history = GetFrigeratorInfo();
 
-    // 核心调用：传入三模态数据进行融合修缮
-    StaticRecognitionResult final_inventory = inventory_manager_.SettleInventory(
-        static_res, dyn_res, history, base_weight_);
+    // 核心流水线：翻译输入 -> 动态盲记 -> 静态对账 -> 组装最终个体 -> 填充 MQTT
+    std::vector<CoreWeightEvent> core_weights;
+    std::vector<CoreDynamicEvent> core_dyn;
+    std::map<FruitType, std::vector<CoreStaticDetail>> core_static_map;
+    inventory_manager_.TranslateInputs(static_res, dyn_res, history, core_weights, core_dyn, core_static_map);
+    inventory_manager_.ProcessDynamicPhase(core_weights, core_dyn);
+    inventory_manager_.ProcessStaticPhase(core_static_map);
+    std::vector<CoreFinalFruit> final_fruits = inventory_manager_.AssembleFinalInventory(core_static_map);
 
     MqttMessageStruct mqtt_msg;
     mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
@@ -89,13 +94,29 @@ void CoreManager::HandleDoorClose() {
     uint32_t random = rand() % 10000;
     // 组合时间戳和随机数，确保在uint32_t范围内
     mqtt_msg.messageId = (timestamp * 10000) + random;
-    mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
-    
-    // 最新硬件状态透传
-    mqtt_msg.fridgeInfo = history.historyInfo[4]; 
-    mqtt_msg.recognitionResult = final_inventory;
 
-    SendMqttMessage(mqtt_msg);
+    // 最新硬件状态透传
+    mqtt_msg.deviceId = FRIDGE_DEVICE_ID;
+    mqtt_msg.fridgeInfo = history.historyInfo[4]; 
+
+    // 将 final_fruits 填充到 mqtt_msg
+    inventory_manager_.FormatToMqtt(final_fruits, mqtt_msg);
+
+    // 尝试发送并在失败时重试/入队
+    bool sent = SendMqttMessage(mqtt_msg);
+    if (!sent) {
+        int retry = 0;
+        const int maxRetry = 2;
+        while (!sent && retry < maxRetry) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            sent = SendMqttMessage(mqtt_msg);
+            ++retry;
+        }
+        if (!sent) {
+            EnqueueMqttMessage(mqtt_msg);
+        }
+    }
+
     last_static_time_ = std::chrono::steady_clock::now();
 }
 
@@ -114,22 +135,38 @@ void CoreManager::ProcessStaticResultOnly() {
     DynamicRecognitionResult empty_dyn_res = {0}; 
     FrigeratorHistoryInfo empty_history = {0};
 
-    StaticRecognitionResult final_inventory = inventory_manager_.SettleInventory(
-        static_res, empty_dyn_res, empty_history, GetFrigeratorInfo().historyInfo[4].weight);
-    
+    // 翻译并执行流水线（无动态事件）
+    std::vector<CoreWeightEvent> core_weights;
+    std::vector<CoreDynamicEvent> core_dyn;
+    std::map<FruitType, std::vector<CoreStaticDetail>> core_static_map;
+    inventory_manager_.TranslateInputs(static_res, empty_dyn_res, empty_history, core_weights, core_dyn, core_static_map);
+    inventory_manager_.ProcessDynamicPhase(core_weights, core_dyn);
+    inventory_manager_.ProcessStaticPhase(core_static_map);
+    std::vector<CoreFinalFruit> final_fruits = inventory_manager_.AssembleFinalInventory(core_static_map);
+
     MqttMessageStruct mqtt_msg;
     mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
-    // 生成时间戳+随机数格式的messageId
     uint32_t timestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count());
-    // 生成0-9999的随机数
     uint32_t random = rand() % 10000;
-    // 组合时间戳和随机数，确保在uint32_t范围内
     mqtt_msg.messageId = (timestamp * 10000) + random;
-    mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
+    mqtt_msg.deviceId = FRIDGE_DEVICE_ID;
     mqtt_msg.fridgeInfo = GetFrigeratorInfo().historyInfo[4];
-    mqtt_msg.finalResult = final_inventory;
 
-    SendMqttMessage(mqtt_msg);
+    inventory_manager_.FormatToMqtt(final_fruits, mqtt_msg);
+
+    bool sent = SendMqttMessage(mqtt_msg);
+    if (!sent) {
+        int retry = 0;
+        const int maxRetry = 2;
+        while (!sent && retry < maxRetry) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            sent = SendMqttMessage(mqtt_msg);
+            ++retry;
+        }
+        if (!sent) {
+            EnqueueMqttMessage(mqtt_msg);
+        }
+    }
 }

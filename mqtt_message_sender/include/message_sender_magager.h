@@ -3,6 +3,7 @@
 
 #include <mutex>
 #include <atomic> // 包含atomic头文件以使用原子变量
+#include <deque>
 #include "../api/mqtt_message_sender_api.h" // 包含mqtt_message_sender_api.h头文件以使用其中定义的结构体和函数声明
 
 const static bool INITI_FINISHED = true; // 定义一个常量，表示初始化是否完成
@@ -23,6 +24,8 @@ public:
     bool IsSenderReady() const { return m_initStatus.load(); } // 检查发送器是否准备就绪
     bool IsMessageSenderIdle() const { return m_SenderIdleStatus.load(); } // 检查发送器是否空闲，供与core通讯
     void CopyMessage(const MqttMessageStruct& message); // 复制core带过来的消息到message_sender内部，供发送线程使用
+    // 入队缓存：当即时发送失败时，可将消息放入队列，MainLoop 会尝试发送队列中的消息
+    void EnqueueMessage(const MqttMessageStruct& message);
     void SetMessageSendSwitch(bool flag) { m_messageSendSwitch.store(flag); } // 设置发送开关，供与core通讯
 
     // 发送功能主循环
@@ -52,6 +55,7 @@ private:
     //发送的信息
     std::mutex m_dataMutex;
     MqttMessageStruct m_message;
+    std::deque<MqttMessageStruct> m_queue;
 };
 
 #endif // MESSAGE_SENDER_MANAGER_H
