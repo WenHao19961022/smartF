@@ -15,7 +15,7 @@ namespace {
 
 void CoreManager::init() {
     FrigeratorHistoryInfo initial_info = GetFrigeratorInfo();
-    last_door_state_ = initial_info.historyInfo[4].doorStatus == 1;
+    last_door_state_ = (initial_info.doorStatus[FRIGERATOR_HISTORY_INFO_SIZE - 1] == DoorStatus::DOOR_OPEN);
     last_static_time_ = std::chrono::steady_clock::now();
     
     while (!IsCvModelReady()) {
