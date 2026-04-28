@@ -1,2 +1,0 @@
-/usr/bin/ar qc libstm32_lib.a  CMakeFiles/stm32_lib.dir/src/message_recever_manager.cpp.o CMakeFiles/stm32_lib.dir/src/stm32_message_recever_api.cpp.o
-/usr/bin/ranlib libstm32_lib.a

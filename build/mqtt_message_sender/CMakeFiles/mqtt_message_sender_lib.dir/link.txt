@@ -1,2 +1,0 @@
-/usr/bin/ar qc libmqtt_message_sender_lib.a  CMakeFiles/mqtt_message_sender_lib.dir/src/message_sender_magager.cpp.o CMakeFiles/mqtt_message_sender_lib.dir/src/mqtt_message_sender_api.cpp.o
-/usr/bin/ranlib libmqtt_message_sender_lib.a

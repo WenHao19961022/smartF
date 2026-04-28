@@ -1,6 +1,7 @@
 #pragma once
 #include <chrono>
 #include "./external_apis.h"
+#include "./inventory_manager.h"
 
 class CoreManager {
 private:

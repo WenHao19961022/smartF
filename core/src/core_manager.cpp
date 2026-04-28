@@ -90,7 +90,7 @@ void CoreManager::HandleDoorClose() {
     uint32_t random = rand() % 10000;
     // 组合时间戳和随机数，确保在uint32_t范围内
     mqtt_msg.messageId = (timestamp * 10000) + random;
-    mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
+    mqtt_msg.deviceId = FRIDGE_DEVICE_ID;
     
     // 组装硬件信息
     FrigeratorInfo current_fridge_info;
@@ -144,7 +144,7 @@ void CoreManager::ProcessStaticResultOnly() {
     uint32_t random = rand() % 10000;
     // 组合时间戳和随机数，确保在uint32_t范围内
     mqtt_msg.messageId = (timestamp * 10000) + random;
-    mqtt_msg.fridgeId = FRIDGE_DEVICE_ID;
+    mqtt_msg.deviceId = FRIDGE_DEVICE_ID;
     
     FrigeratorInfo current_fridge_info;
     current_fridge_info.temperature = curr_history.temperature[FRIGERATOR_HISTORY_INFO_SIZE - 1];

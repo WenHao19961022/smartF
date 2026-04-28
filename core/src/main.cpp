@@ -1,6 +1,7 @@
 #include <iostream>
 #include <thread>
 #include "../include/external_apis.h"
+#include "../include/core_manager.h"
 
 // 模块函数声明
 void LaunchMqttMessageSender() {
