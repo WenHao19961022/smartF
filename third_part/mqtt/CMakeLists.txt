@@ -1,16 +1,19 @@
 # third_part/mqtt/CMakeLists.txt
+cmake_minimum_required(VERSION 3.10)
 
-# 寻找系统安装的 Paho MQTT 库
-find_package(PahoMqttCpp QUIET)
+# 查找已安装的Paho库
+find_package(PahoMqttC REQUIRED)
+find_package(PahoMqttCpp REQUIRED)
 
-if(PahoMqttCpp_FOUND)
-    # 创建接口库供主项目使用
-    add_library(3rd_mqtt INTERFACE)
-    target_link_libraries(3rd_mqtt INTERFACE PahoMqttCpp::paho-mqttpp3-static)
-    target_include_directories(3rd_mqtt INTERFACE ${PahoMqttCpp_INCLUDE_DIRS})
-    message(STATUS "Found PahoMqttCpp")
-else()
-    # 如果找不到，创建空的接口库（MQTT功能将不可用）
-    add_library(3rd_mqtt INTERFACE)
-    message(WARNING "PahoMqttCpp not found! MQTT functionality will be disabled.")
-endif()
+message(STATUS "Using system Paho MQTT libraries")
+
+# 您的MQTT相关代码
+# ... 您的源代码配置 ...
+
+# 链接系统安装的Paho库
+target_link_libraries(your_target_name
+    PahoMqttC::paho-mqtt3c
+    PahoMqttCpp::paho-mqttpp3
+    ${OpenSSL_LIBRARIES}
+    pthread
+)

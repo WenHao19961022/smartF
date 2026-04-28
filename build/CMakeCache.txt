@@ -212,6 +212,9 @@ CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 //The directory containing a CMake configuration file for OpenCV.
 OpenCV_DIR:PATH=/usr/lib/x86_64-linux-gnu/cmake/opencv4
 
+//The directory containing a CMake configuration file for PahoMqttC.
+PahoMqttC_DIR:PATH=PahoMqttC_DIR-NOTFOUND
+
 //The directory containing a CMake configuration file for PahoMqttCpp.
 PahoMqttCpp_DIR:PATH=PahoMqttCpp_DIR-NOTFOUND
 
@@ -220,6 +223,12 @@ SmartFridge_BINARY_DIR:STATIC=/home/wh/ws/smart_fridge/build
 
 //Value Computed by CMake
 SmartFridge_SOURCE_DIR:STATIC=/home/wh/ws/smart_fridge
+
+//Path to a file.
+TRT_INCLUDE_DIR:PATH=TRT_INCLUDE_DIR-NOTFOUND
+
+//Path to a library.
+TRT_INFER_LIB:FILEPATH=TRT_INFER_LIB-NOTFOUND
 
 
 ########################
