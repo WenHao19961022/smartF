@@ -42,6 +42,7 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message)
     // 这里应该包含实际发送消息的逻辑，例如通过MQTT协议将消息发送到服务器
     // 由于这是一个示例，我们暂时不实现具体的发送逻辑
     // 可以在这里添加日志记录或其他处理逻辑
+    return true;
 }
 
 void MessageSenderManager::MainLoop()
