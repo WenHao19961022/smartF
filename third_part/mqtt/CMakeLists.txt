@@ -1,24 +1,26 @@
 # third_part/mqtt/CMakeLists.txt
 
-# 查找已安装的Paho库（可选）
-find_package(PahoMqttC QUIET)
-find_package(PahoMqttCpp QUIET)
+message(STATUS "Using manual discovery for Paho MQTT to avoid ALIAS visibility issues")
 
-# 检查是否找到MQTT库
-if(PahoMqttC_FOUND AND PahoMqttCpp_FOUND)
-    message(STATUS "Found Paho MQTT libraries - MQTT support enabled")
-    
-    # 创建接口库供主项目使用
+# 直接寻找库文件和头文件
+find_library(MQTT_C_LIB NAMES paho-mqtt3as PATHS /usr/local/lib NO_DEFAULT_PATH)
+find_library(MQTT_C_LIB NAMES paho-mqtt3as) # 备选搜索
+
+find_library(MQTT_CPP_LIB NAMES paho-mqttpp3 PATHS /usr/local/lib NO_DEFAULT_PATH)
+find_library(MQTT_CPP_LIB NAMES paho-mqttpp3) # 备选搜索
+
+find_path(MQTT_C_INC NAMES MQTTAsync.h PATHS /usr/local/include NO_DEFAULT_PATH)
+find_path(MQTT_CPP_INC NAMES mqtt/async_client.h PATHS /usr/local/include NO_DEFAULT_PATH)
+
+if(MQTT_C_LIB AND MQTT_CPP_LIB)
     add_library(3rd_mqtt INTERFACE)
-    target_link_libraries(3rd_mqtt INTERFACE
-        PahoMqttC::paho-mqtt3c
-        PahoMqttCpp::paho-mqttpp3
-    )
+    # 链接具体的库文件路径，避开不稳定的 ALIAS 目标
+    target_link_libraries(3rd_mqtt INTERFACE ${MQTT_CPP_LIB} ${MQTT_C_LIB})
+    target_include_directories(3rd_mqtt INTERFACE ${MQTT_C_INC} ${MQTT_CPP_INC})
+    
+    message(STATUS "Found MQTT C Lib: ${MQTT_C_LIB}")
+    message(STATUS "Found MQTT C++ Lib: ${MQTT_CPP_LIB}")
     set(WITH_MQTT ON CACHE BOOL "MQTT support" FORCE)
 else()
-    message(WARNING "Paho MQTT libraries not found - MQTT support disabled")
-    
-    # 创建空接口库，使链接不失败
-    add_library(3rd_mqtt INTERFACE)
-    set(WITH_MQTT OFF CACHE BOOL "MQTT support" FORCE)
+    message(FATAL_ERROR "MQTT Libraries NOT found in /usr/local. Please verify the installation.")
 endif()
