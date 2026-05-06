@@ -9,8 +9,15 @@ InferenceEngine::InferenceEngine(const std::string& enginePath) {
 }
 
 InferenceEngine::~InferenceEngine() {
+    // 释放 CUDA 流
     if (m_stream) cudaStreamDestroy(m_stream);
-    for (void* buf : m_gpuBuffers) if (buf) cudaFree(buf);
+    
+    // 释放 GPU 显存
+    for (void* buf : m_gpuBuffers) {
+        if (buf) cudaFree(buf);
+    }
+
+    // TensorRT 8.x+ 弃用了 .destroy()，直接使用 delete 释放接口指针
     if (m_context) delete m_context;
     if (m_engine) delete m_engine;
     if (m_runtime) delete m_runtime;
@@ -27,39 +34,62 @@ bool InferenceEngine::loadEngine(const std::string& path) {
     file.read(data.data(), size);
 
     m_runtime = nvinfer1::createInferRuntime(m_logger);
+    if (!m_runtime) return false;
+
     m_engine = m_runtime->deserializeCudaEngine(data.data(), size);
+    if (!m_engine) return false;
+
     m_context = m_engine->createExecutionContext();
+    if (!m_context) return false;
+
     cudaStreamCreate(&m_stream);
 
-    // 自动获取绑定信息
-    for (int i = 0; i < 2; ++i) {
-        nvinfer1::Dims dims = m_engine->getBindingDimensions(i);
+    // 获取输入输出绑定信息
+    // 使用 getNbIOTensors (TRT 8.5+) 替代 getNbBindings (已弃用)
+    int nbIO = m_engine->getNbIOTensors();
+    
+    for (int i = 0; i < nbIO; ++i) {
+        const char* name = m_engine->getIOTensorName(i);
+        nvinfer1::TensorIOMode mode = m_engine->getTensorIOMode(name);
+        nvinfer1::Dims dims = m_engine->getTensorShape(name);
+        
         size_t vol = 1;
         for (int j = 0; j < dims.nbDims; ++j) vol *= dims.d[j];
-        
         size_t bytes = vol * sizeof(float);
+        
         cudaMalloc(&m_gpuBuffers[i], bytes);
         
-        if (m_engine->bindingIsInput(i)) {
+        if (mode == nvinfer1::TensorIOMode::kINPUT) {
             m_inputSizeBytes = bytes;
-            for(int j=0; j<dims.nbDims; ++j) m_inputDims.push_back(dims.d[j]);
+            m_inputDims.clear();
+            for(int j = 0; j < dims.nbDims; ++j) m_inputDims.push_back(dims.d[j]);
+            // 设置输入张量地址 (V3 模式必需)
+            m_context->setTensorAddress(name, m_gpuBuffers[i]);
         } else {
             m_outputSizeBytes = bytes;
-            for(int j=0; j<dims.nbDims; ++j) m_outputDims.push_back(dims.d[j]);
+            m_outputDims.clear();
+            for(int j = 0; j < dims.nbDims; ++j) m_outputDims.push_back(dims.d[j]);
+            // 设置输出张量地址 (V3 模式必需)
+            m_context->setTensorAddress(name, m_gpuBuffers[i]);
         }
     }
     return true;
 }
 
 bool InferenceEngine::infer(const cv::Mat& frame, std::vector<float>& outputData) {
-    // 1. 预处理 (Resize to 640x640, BGR to RGB, Normalize)
-    cv::Mat blob = cv::dnn::blobFromImage(frame, 1.0/255.0, cv::Size(m_inputDims[2], m_inputDims[3]), cv::Scalar(0,0,0), true, false);
+    if (frame.empty()) return false;
+
+    // 1. 预处理 (Resize to m_inputDims[2]x[3], BGR to RGB, Normalize)
+    cv::Mat blob = cv::dnn::blobFromImage(frame, 1.0/255.0, 
+                                          cv::Size(m_inputDims[2], m_inputDims[3]), 
+                                          cv::Scalar(0,0,0), true, false);
 
     // 2. 数据拷贝 (H2D)
     cudaMemcpyAsync(m_gpuBuffers[0], blob.data, m_inputSizeBytes, cudaMemcpyHostToDevice, m_stream);
 
-    // 3. 执行推理
-    m_context->enqueueV2(m_gpuBuffers, m_stream, nullptr);
+    // 3. 执行推理 (使用 enqueueV3 替代已弃用的 enqueueV2)
+    // 注意：enqueueV3 依赖前面 loadEngine 中 setTensorAddress 的设置
+    m_context->enqueueV3(m_stream);
 
     // 4. 数据拷贝 (D2H)
     outputData.resize(m_outputSizeBytes / sizeof(float));
@@ -67,5 +97,6 @@ bool InferenceEngine::infer(const cv::Mat& frame, std::vector<float>& outputData
 
     // 5. 同步流
     cudaStreamSynchronize(m_stream);
+    
     return true;
 }

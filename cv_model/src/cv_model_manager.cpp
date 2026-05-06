@@ -64,9 +64,7 @@ CvModelManager& CvModelManager::GetInstance()
 }
 
 void CvModelManager::MainLoop()
-{
-    std::cout << "[CvModelManager] Entering Main Loop..." << std::endl;
-    
+{    
     while (true)
     {
         if (!IsCvModelReady()) {
