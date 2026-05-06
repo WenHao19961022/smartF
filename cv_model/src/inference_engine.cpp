@@ -11,9 +11,9 @@ InferenceEngine::InferenceEngine(const std::string& enginePath) {
 InferenceEngine::~InferenceEngine() {
     if (m_stream) cudaStreamDestroy(m_stream);
     for (void* buf : m_gpuBuffers) if (buf) cudaFree(buf);
-    if (m_context) m_context->destroy();
-    if (m_engine) m_engine->destroy();
-    if (m_runtime) m_runtime->destroy();
+    if (m_context) delete m_context;
+    if (m_engine) delete m_engine;
+    if (m_runtime) delete m_runtime;
 }
 
 bool InferenceEngine::loadEngine(const std::string& path) {
