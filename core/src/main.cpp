@@ -3,6 +3,7 @@
 #include <mutex>
 #include "../include/external_apis.h"
 #include "../include/core_manager.h"
+#include <config_manager.h>
 
 // 全局互斥锁
 std::mutex coutMutex;
@@ -50,6 +51,8 @@ void CoreThread() {
 }
 
 int main() {
+    ConfigManager::GetInstance().LoadConfig();
+
     // 创建4个线程，每个线程运行一个模块
     std::thread t1(LaunchMqttMessageSender);
     std::thread t2(LaunchStm32MessageReceiver);

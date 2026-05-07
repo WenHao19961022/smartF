@@ -10,7 +10,7 @@ class ConfigManager {
 public:
     static ConfigManager& GetInstance();
 
-    bool LoadConfig(const std::string& configPath = "config/smartfridge.conf");
+    bool LoadConfig(const std::string& configPath = "/home/nvidia/ws/smartF/config/smartfridge.conf");
 
     std::string GetString(const std::string& key, const std::string& defaultVal = "");
     int GetInt(const std::string& key, int defaultVal = 0);
@@ -22,7 +22,7 @@ public:
     void SetFloat(const std::string& key, float val);
     void SetBool(const std::string& key, bool val);
 
-    bool SaveConfig(const std::string& configPath = "config/smartfridge.conf");
+    bool SaveConfig(const std::string& configPath = "/home/nvidia/ws/smartF/config/smartfridge.conf");
 
 private:
     ConfigManager();

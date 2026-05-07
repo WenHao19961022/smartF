@@ -1,5 +1,6 @@
 #include "../include/cv_model_manager.h"
 #include "../include/camera_model.h"
+#include "../../common/include/config_manager.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -31,8 +32,10 @@ bool CvModelManager::CvModelInit() {
     mDynamicRecognitionResult = {};
     mDataMutex.unlock();
 
+    std::string enginePath = ConfigManager::GetInstance().GetString("cv.model_path", "cv_model/yolov8/yolo12n.engine");
+
     try {
-        mInferenceEngine = std::make_unique<InferenceEngine>("cv_model/yolov8/yolo12n.engine");
+        mInferenceEngine = std::make_unique<InferenceEngine>(enginePath);
         SetReady();
         std::cout << "[CvModelManager] TensorRT Engine Initialized Successfully." << std::endl;
         return true;
@@ -166,6 +169,10 @@ void CvModelManager::StaticRecognitionInternal() {
                 }
 
                 std::cout << "[CvModel] Static: Detection " << (detectionIndex + 1) << " - Detected " << detections.size() << " fruits" << std::endl;
+                // 打印每个检测的详细信息
+                for (const auto& det : detections) {
+                    std::cout << "  - Type: " << (int)det.fruitType << std::endl;
+                }
             }
         } else if (!frame.empty()) {
             std::cout << "[CvModel] mInferenceEngine is not initialized" << std::endl;
