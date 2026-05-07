@@ -19,4 +19,4 @@ target_include_directories(mqtt_message_sender_lib
 )
 
 # 4. 链接第三方库
-target_link_libraries(mqtt_message_sender_lib PRIVATE 3rd_mqtt)
+target_link_libraries(mqtt_message_sender_lib PRIVATE 3rd_mqtt Threads::Threads)

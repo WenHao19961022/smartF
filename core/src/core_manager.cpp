@@ -136,10 +136,9 @@ void CoreManager::HandleDoorClose() {
     size_t fillCount = std::min((size_t)MAX_STATIC_FRUIT_COUNT, flattened.size());
     msg.fruitCount = static_cast<uint8_t>(fillCount);
     for (size_t i = 0; i < fillCount; ++i) {
-        msg.fruits[i].fruitInfo.fruitType = flattened[i].type;
-        msg.fruits[i].fruitInfo.freshness = flattened[i].freshness;
-        msg.fruits[i].fruitInfo.locationX = flattened[i].locationX;
-        msg.fruits[i].fruitInfo.locationY = flattened[i].locationY;
+        msg.fruits[i].id = flattened[i].id;
+        msg.fruits[i].type = flattened[i].type;
+        msg.fruits[i].freshness = flattened[i].freshness;
         int32_t avgW = 0;
         auto it = avgWeights.find(flattened[i].type);
         if (it != avgWeights.end()) avgW = it->second;
@@ -198,10 +197,9 @@ void CoreManager::ProcessStaticResultOnly() {
     size_t fillCount = std::min((size_t)MAX_STATIC_FRUIT_COUNT, flattened.size());
     mqtt_msg.fruitCount = static_cast<uint8_t>(fillCount);
     for (size_t i = 0; i < fillCount; ++i) {
-        mqtt_msg.fruits[i].fruitInfo.fruitType = flattened[i].type;
-        mqtt_msg.fruits[i].fruitInfo.freshness = flattened[i].freshness;
-        mqtt_msg.fruits[i].fruitInfo.locationX = flattened[i].locationX;
-        mqtt_msg.fruits[i].fruitInfo.locationY = flattened[i].locationY;
+        mqtt_msg.fruits[i].id = flattened[i].id;
+        mqtt_msg.fruits[i].type = flattened[i].type;
+        mqtt_msg.fruits[i].freshness = flattened[i].freshness;
         int32_t avgW = 0;
         auto it = avgWeights.find(flattened[i].type);
         if (it != avgWeights.end()) avgW = it->second;

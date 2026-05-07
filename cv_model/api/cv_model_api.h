@@ -6,11 +6,14 @@
 const static uint8_t MAX_STATIC_FRUIT_COUNT = 10; // 定义一个常量，表示最大识别水果数量
 const static uint8_t MAX_DYNAMIC_FRUIT_COUNT = 5; // 定义一个常量，表示动态识别最大识别水果数量
 
-// 水果枚举
+// 水果枚举（值与JSON中的type字符串对应）
 enum class FruitType : uint8_t {
-    APPLE  = 0,
-    BANANA = 1,
-    ORANGE = 2,
+    APPLE  = 1,   // type显示为"1"
+    BANANA = 2,   // type显示为"2"
+    ORANGE = 3,   // type显示为"3"
+    GRAPE  = 4,   // type显示为"4"
+    PEAR   = 5,   // type显示为"5"
+    MANGO  = 6,   // type显示为"6"
     // 其他水果类型
 };
 

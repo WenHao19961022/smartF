@@ -1,50 +1,103 @@
 #include "../include/camera_model.h"
 #include <thread>
+#include <chrono>
 #include <iostream>
 
-// 获取单例实例
 CameraModule& CameraModule::GetInstance() {
     static CameraModule instance;
     return instance;
 }
 
-// 构造函数：初始化摄像头并开启采集线程
 CameraModule::CameraModule() {
-    // 启动一个后台线程来更新 m_latestFrame
-    // 在实际生产代码中，建议将线程对象保存为成员变量以便优雅停止
-    std::thread([this]() {
-        cv::VideoCapture cap(0); // 打开默认摄像头
-        if (!cap.isOpened()) {
-            std::cerr << "错误：无法打开摄像头！" << std::endl;
-            return;
-        }
+    m_running.store(true);
+    m_isOpened.store(false);
 
-        cv::Mat tempFrame;
-        while (true) {
-            if (cap.read(tempFrame)) {
-                // 使用互斥锁保护共享资源
-                std::lock_guard<std::mutex> lock(m_frameMutex);
-                tempFrame.copyTo(m_latestFrame);
-            }
-            // 适当休眠以降低 CPU 占用（例如对应 30 FPS）
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-        }
-    }).detach(); // 这里使用 detach 简化演示，实际项目中建议管理好线程生命周期
+    // 启动采集线程
+    m_captureThread = std::thread(&CameraModule::captureThreadFunc, this);
 }
 
 CameraModule::~CameraModule() {
-    // 如果有资源（如摄像头句柄）需要释放，在此处理
+    m_running.store(false);
+
+    if (m_captureThread.joinable()) {
+        m_captureThread.join();
+    }
+
+    closeCamera();
 }
 
-// 获取最新的图像帧
+bool CameraModule::openCamera() {
+    closeCamera();
+
+    m_capture.open(m_cameraIndex);
+
+    if (!m_capture.isOpened()) {
+        std::cerr << "[Camera] Failed to open camera index " << m_cameraIndex << std::endl;
+        m_isOpened.store(false);
+        return false;
+    }
+
+    // 设置分辨率
+    m_capture.set(cv::CAP_PROP_FRAME_WIDTH, m_width);
+    m_capture.set(cv::CAP_PROP_FRAME_HEIGHT, m_height);
+
+    // 设置帧率
+    m_capture.set(cv::CAP_PROP_FPS, 30);
+
+    m_isOpened.store(true);
+    std::cout << "[Camera] Camera opened successfully ("
+              << m_width << "x" << m_height << ")" << std::endl;
+    return true;
+}
+
+void CameraModule::closeCamera() {
+    if (m_capture.isOpened()) {
+        m_capture.release();
+    }
+    m_isOpened.store(false);
+}
+
+void CameraModule::captureThreadFunc() {
+    int reconnectDelaySec = 2;
+    int maxReconnectDelaySec = 30;
+
+    while (m_running.load()) {
+        if (!m_isOpened.load()) {
+            if (openCamera()) {
+                reconnectDelaySec = 2;
+            } else {
+                std::this_thread::sleep_for(std::chrono::seconds(reconnectDelaySec));
+                reconnectDelaySec = std::min(reconnectDelaySec * 2, maxReconnectDelaySec);
+            }
+            continue;
+        }
+
+        cv::Mat tempFrame;
+        if (m_capture.read(tempFrame)) {
+            if (!tempFrame.empty()) {
+                std::lock_guard<std::mutex> lock(m_frameMutex);
+                tempFrame.copyTo(m_latestFrame);
+            }
+        } else {
+            // 读取失败，摄像头可能断开
+            std::cerr << "[Camera] Frame capture failed, scheduling reconnect..." << std::endl;
+            m_isOpened.store(false);
+            closeCamera();
+
+            std::this_thread::sleep_for(std::chrono::seconds(reconnectDelaySec));
+            reconnectDelaySec = std::min(reconnectDelaySec * 2, maxReconnectDelaySec);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+}
+
 cv::Mat CameraModule::GetLatestFrame() {
     std::lock_guard<std::mutex> lock(m_frameMutex);
-    
-    // 如果没有获取到有效帧，返回空矩阵
+
     if (m_latestFrame.empty()) {
         return cv::Mat();
     }
 
-    // 返回副本以确保调用者在处理时，后台线程可以安全地更新原始矩阵
     return m_latestFrame.clone();
 }

@@ -10,6 +10,7 @@
 
 // 内部追踪的占位符（已剔除单体重量）
 struct TrackedFruit {
+    uint16_t id = 0;         // 水果唯一ID（自增分配）
     std::string uid;
     FruitType type;
     FreshnessLevel freshness;
@@ -40,8 +41,12 @@ public:
     // 辅助：获取当前账面总重
     int32_t getBookTotalWeight();
 
+    // 获取下一个可用ID
+    uint16_t getNextId() { return ++next_fruit_id_; }
+
 private:
     std::map<FruitType, CategoryStock> stock_;
+    uint16_t next_fruit_id_ = 100; // ID从100开始分配
 };
 
 #endif
