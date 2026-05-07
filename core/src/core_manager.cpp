@@ -3,6 +3,8 @@
 #include <thread>
 #include <cstdlib>
 #include <ctime>
+#include <algorithm>
+#include <atomic>
 
 // 初始化随机数种子
 namespace {
@@ -12,6 +14,9 @@ namespace {
         }
     } randomSeedInitializer;
 }
+
+// 全局消息序列号（用于构造 32-bit messageId 的低 16 位）
+static std::atomic<uint16_t> g_msg_counter(0);
 
 void CoreManager::init() {
     FrigeratorHistoryInfo initial_info = GetFrigeratorInfo();
@@ -54,62 +59,101 @@ void CoreManager::run() {
 }
 
 void CoreManager::HandleDoorOpen() {
-    is_static_waiting_ = false; 
+    is_static_waiting_ = false;
+    // 记录开门瞬间时间戳（秒）作为本次批次基准
+    door_open_timestamp_ = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                             std::chrono::system_clock::now().time_since_epoch()).count());
     StartDynamicRecognition();
 }
 
 void CoreManager::HandleDoorClose() {
-    StopDynamicRecognition(); 
+    StopDynamicRecognition();
     
     while (!IsDynamicRecognitionIdle()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DynamicRecognitionResult dyn_res = GetDynamicRecognitionResult();
+    DynamicRecognitionResult dyn = GetDynamicRecognitionResult();
 
     StartStaticRecognition();
     while (!IsStaticRecognitionIdle()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    StaticRecognitionResult static_res = GetStaticRecognitionResult();
-    
+    StaticRecognitionResult stat = GetStaticRecognitionResult();
+
     // 关门后获取完整的历史重量过程
     FrigeratorHistoryInfo history = GetFrigeratorInfo();
+    uint16_t current_weight = history.weight[FRIGERATOR_HISTORY_INFO_SIZE - 1];
 
-    // 核心调用：传入三模态数据进行融合修缮
-    // 拿到携带单体重量的新版库存结构
-    FinalInventory final_inventory = inventory_manager_.SettleInventory(
-        static_res, dyn_res, history, base_weight_);
+    // 计算净重跳变（相对于开门时的基准）
+    int32_t weightDelta = static_cast<int32_t>(current_weight) - static_cast<int32_t>(base_weight_);
 
-    MqttMessageStruct mqtt_msg;
-    mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
-    // 生成时间戳+随机数格式的messageId
-    uint32_t timestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-    // 生成0-9999的随机数
-    uint32_t random = rand() % 10000;
-    // 组合时间戳和随机数，确保在uint32_t范围内
-    mqtt_msg.messageId = (timestamp * 10000) + random;
-    mqtt_msg.deviceId = FRIDGE_DEVICE_ID;
-    
-    // 组装硬件信息
-    FrigeratorInfo current_fridge_info;
-    current_fridge_info.temperature = history.temperature[FRIGERATOR_HISTORY_INFO_SIZE - 1];
-    current_fridge_info.humidity = history.humidity[FRIGERATOR_HISTORY_INFO_SIZE - 1];
-    current_fridge_info.weight = history.weight[FRIGERATOR_HISTORY_INFO_SIZE - 1];
-    current_fridge_info.doorStatus = DoorStatus::DOOR_CLOSED;
+    uint32_t now = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
 
-    // 最新硬件状态透传
-    mqtt_msg.fridgeInfo = current_fridge_info; 
+    // 动态对账：从动态 CV 结果推断交互的水果种类（一次只交互一种）
+    if (dyn.fruitCount > 0) {
+        FruitType interacted_type = dyn.fruitInfoWithTimestamp[0].fruitInfo.fruitType;
+        int countDelta = 0;
+        if (weightDelta > 0) countDelta = dyn.fruitCount; // 放入
+        else countDelta = -static_cast<int>(dyn.fruitCount); // 取出
 
-    // 适配新的 MQTT 水果数组填充
-    mqtt_msg.fruitCount = final_inventory.fruitCount;
-    for (uint8_t i = 0; i < final_inventory.fruitCount; ++i) {
-        mqtt_msg.fruits[i] = final_inventory.fruits[i];
+        // 执行动态对账 (V3.0 逻辑 1) — 传入开门基准时间戳作为 UID 批次
+        inventory_manager_.handleDynamicEvent(interacted_type, weightDelta, countDelta, door_open_timestamp_, static_cast<int32_t>(current_weight));
+    } else {
+        if (weightDelta != 0) {
+            std::cout << "[Warning] Weight changed but CV saw no dynamic action!" << std::endl;
+        }
     }
 
-    SendMqttMessage(mqtt_msg);
-    last_static_time_ = std::chrono::steady_clock::now();
+    // 执行静态对账 (V3.0 逻辑 2) — 传入开门基准时间戳用于 UID 生成
+    inventory_manager_.handleStaticEvent(stat, door_open_timestamp_);
+
+    // 生成 MQTT 报文 (V3.0 逻辑 3)
+    std::map<FruitType, int32_t> avgWeights;
+    std::vector<TrackedFruit> flattened = inventory_manager_.getFlattenedStock(avgWeights);
+
+
+    MqttMessageStruct msg;
+    // 1. 生成时间戳和必填信息 (与 ProcessStaticResultOnly 保持一致)
+    uint32_t timestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
+    uint32_t random_val = rand() % 10000;
+
+    msg.time = timestamp;
+    // 防止溢出：使用64位左移再异或随机数，最后截断为 uint32_t
+    // 生成 messageId：高16位用 timestamp 低16位，低16位用原子序号，避免溢出且减少冲突概率
+    uint16_t seq = g_msg_counter.fetch_add(1);
+    msg.messageId = ((timestamp & 0xFFFFu) << 16) | seq;
+    msg.deviceId = FRIDGE_DEVICE_ID;
+
+    // 填充底层硬件状态 (从 history 中获取)
+    msg.fridgeInfo.temperature = history.temperature[FRIGERATOR_HISTORY_INFO_SIZE - 1];
+    msg.fridgeInfo.humidity = history.humidity[FRIGERATOR_HISTORY_INFO_SIZE - 1];
+    msg.fridgeInfo.doorStatus = DoorStatus::DOOR_CLOSED;
+    // 遵守外部 API：没有 totalWeight 字段，使用 fridgeInfo.weight
+    msg.fridgeInfo.weight = history.weight[FRIGERATOR_HISTORY_INFO_SIZE - 1];
+
+    size_t fillCount = std::min((size_t)MAX_STATIC_FRUIT_COUNT, flattened.size());
+    msg.fruitCount = static_cast<uint8_t>(fillCount);
+    for (size_t i = 0; i < fillCount; ++i) {
+        msg.fruits[i].fruitInfo.fruitType = flattened[i].type;
+        msg.fruits[i].fruitInfo.freshness = flattened[i].freshness;
+        msg.fruits[i].fruitInfo.locationX = flattened[i].locationX;
+        msg.fruits[i].fruitInfo.locationY = flattened[i].locationY;
+        int32_t avgW = 0;
+        auto it = avgWeights.find(flattened[i].type);
+        if (it != avgWeights.end()) avgW = it->second;
+        msg.fruits[i].weight = (avgW > 0) ? static_cast<uint32_t>(avgW) : 0;
+    }
+
+    SendMqttMessage(msg);
+
+    // Debug Print 3 (生产格式)
+    std::cout << "[MQTT] Sent MsgID: " << msg.messageId << " | Fruit Count: " << (int)msg.fruitCount
+              << " | FridgeWeight: " << msg.fridgeInfo.weight << "g" << std::endl;
+    for(auto const& [t, w] : avgWeights) {
+        std::cout << "[MQTT] Avg Weight Type " << (int)t << ": " << w << "g" << std::endl;
+    }
 }
 
 void CoreManager::CheckTimers() {
@@ -123,42 +167,48 @@ void CoreManager::CheckTimers() {
 
 void CoreManager::ProcessStaticResultOnly() {
     is_static_waiting_ = false;
-    StaticRecognitionResult static_res = GetStaticRecognitionResult();
-    DynamicRecognitionResult empty_dyn_res = {0}; 
-    FrigeratorHistoryInfo empty_history = {0};
+    StaticRecognitionResult stat = GetStaticRecognitionResult();
+
+    // 直接用静态结果做对账并上报（使用上一次开门时间戳作为批次UID）
+    inventory_manager_.handleStaticEvent(stat, door_open_timestamp_);
 
     FrigeratorHistoryInfo curr_history = GetFrigeratorInfo();
     uint16_t curr_weight = curr_history.weight[FRIGERATOR_HISTORY_INFO_SIZE - 1];
 
-    FinalInventory final_inventory = inventory_manager_.SettleInventory(
-        static_res, empty_dyn_res, empty_history, curr_weight);
-    
+    std::map<FruitType, int32_t> avgWeights;
+    std::vector<TrackedFruit> flattened = inventory_manager_.getFlattenedStock(avgWeights);
+
     MqttMessageStruct mqtt_msg;
     mqtt_msg.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
-
-    // 生成时间戳+随机数格式的messageId
-    uint32_t timestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-    // 生成0-9999的随机数
+    uint32_t timestamp = mqtt_msg.time;
     uint32_t random = rand() % 10000;
-    // 组合时间戳和随机数，确保在uint32_t范围内
-    mqtt_msg.messageId = (timestamp * 10000) + random;
+    // ProcessStaticResultOnly: 生成 messageId 使用相同策略
+    uint16_t seq2 = g_msg_counter.fetch_add(1);
+    mqtt_msg.messageId = ((timestamp & 0xFFFFu) << 16) | seq2;
     mqtt_msg.deviceId = FRIDGE_DEVICE_ID;
-    
+
     FrigeratorInfo current_fridge_info;
     current_fridge_info.temperature = curr_history.temperature[FRIGERATOR_HISTORY_INFO_SIZE - 1];
     current_fridge_info.humidity = curr_history.humidity[FRIGERATOR_HISTORY_INFO_SIZE - 1];
     current_fridge_info.weight = curr_weight;
     current_fridge_info.doorStatus = DoorStatus::DOOR_CLOSED;
-
     mqtt_msg.fridgeInfo = current_fridge_info;
-    
-    // 数组拷贝
-    mqtt_msg.fruitCount = final_inventory.fruitCount;
-    for (uint8_t i = 0; i < final_inventory.fruitCount; ++i) {
-        mqtt_msg.fruits[i] = final_inventory.fruits[i];
+
+    size_t fillCount = std::min((size_t)MAX_STATIC_FRUIT_COUNT, flattened.size());
+    mqtt_msg.fruitCount = static_cast<uint8_t>(fillCount);
+    for (size_t i = 0; i < fillCount; ++i) {
+        mqtt_msg.fruits[i].fruitInfo.fruitType = flattened[i].type;
+        mqtt_msg.fruits[i].fruitInfo.freshness = flattened[i].freshness;
+        mqtt_msg.fruits[i].fruitInfo.locationX = flattened[i].locationX;
+        mqtt_msg.fruits[i].fruitInfo.locationY = flattened[i].locationY;
+        int32_t avgW = 0;
+        auto it = avgWeights.find(flattened[i].type);
+        if (it != avgWeights.end()) avgW = it->second;
+        mqtt_msg.fruits[i].weight = (avgW > 0) ? static_cast<uint32_t>(avgW) : 0;
     }
 
     SendMqttMessage(mqtt_msg);
+    std::cout << "[MQTT] Sent MsgID: " << mqtt_msg.messageId << " | Fruit Count: " << (int)mqtt_msg.fruitCount
+              << " | FridgeWeight: " << mqtt_msg.fridgeInfo.weight << "g" << std::endl;
 }

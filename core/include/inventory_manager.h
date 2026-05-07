@@ -1,39 +1,47 @@
-#pragma once
-#include <vector>
-#include <map>
-#include <string>
-#include "./external_apis.h"
+#ifndef INVENTORY_MANAGER_H
+#define INVENTORY_MANAGER_H
 
-// 内部追踪的业务实体，新增 weight 字段用于记录单体重量
+#include <vector>
+#include <string>
+#include <map>
+#include <cstdint>
+#include <algorithm>
+#include "external_apis.h" // 包含 FruitType, FreshnessLevel 等定义
+
+// 内部追踪的占位符（已剔除单体重量）
 struct TrackedFruit {
-    std::string uid;           
+    std::string uid;
     FruitType type;
     FreshnessLevel freshness;
-    uint32_t put_in_timestamp; 
-    uint32_t estimated_weight; // 克 (g)
-    uint8_t locationX;        // 水果在图像中的X坐标（用于精确匹配）
-    uint8_t locationY;        // 水果在图像中的Y坐标（用于精确匹配）
+    uint32_t put_in_timestamp;
+    uint8_t locationX;
+    uint8_t locationY;
 };
 
-// 专门用于向 Core 传递组装好数据的包装结构体
-struct FinalInventory {
-    uint8_t fruitCount;
-    FruitInfoWithWeight fruits[MAX_STATIC_FRUIT_COUNT];
+// 品类库存结构
+struct CategoryStock {
+    int32_t total_weight = 0;             // 该类水果的总重量 (g)
+    std::vector<TrackedFruit> fruits;     // 该类水果的实例数组，size() 即数量
 };
 
 class InventoryManager {
-private:
-    std::map<FruitType, std::vector<TrackedFruit>> stock_;
-    
-    std::string GenerateUID(FruitType type, uint32_t timestamp);
-    void UpdateFreshnessFromStatic(FruitType type, const StaticRecognitionResult& static_res);
-    //StaticRecognitionResult GenerateFinalStruct(uint32_t current_timestamp);
-    FinalInventory GenerateFinalStruct(); // 修改返回值
-
 public:
-    // 终极对账：时序对齐融合
-    FinalInventory SettleInventory(const StaticRecognitionResult& static_res, 
-                                            const DynamicRecognitionResult& dyn_res,
-                                            const FrigeratorHistoryInfo& history,
-                                            uint16_t base_weight);
+    InventoryManager() = default;
+
+    // 1. 动态对账：处理动作和重量补偿
+    void handleDynamicEvent(FruitType type, int32_t weightDelta, int countDelta, uint32_t timestamp, int32_t realTotalWeight);
+
+    // 2. 静态对账：数量强制对齐与属性覆写
+    void handleStaticEvent(const StaticRecognitionResult& static_res, uint32_t door_open_ts);
+
+    // 3. 最终输出：获取展平后的数据用于MQTT上报
+    std::vector<TrackedFruit> getFlattenedStock(std::map<FruitType, int32_t>& avgWeights);
+
+    // 辅助：获取当前账面总重
+    int32_t getBookTotalWeight();
+
+private:
+    std::map<FruitType, CategoryStock> stock_;
 };
+
+#endif

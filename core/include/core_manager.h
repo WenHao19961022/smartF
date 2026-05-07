@@ -9,6 +9,7 @@ private:
     bool last_door_state_ = false;
     bool is_static_waiting_ = false;
     uint16_t base_weight_ = 0; // 开门前的基准重量
+    uint32_t door_open_timestamp_ = 0; // 记录本次开门时间戳（秒）
     
     uint32_t message_id_counter_ = 0; 
     const uint32_t FRIDGE_DEVICE_ID = 10001; 
