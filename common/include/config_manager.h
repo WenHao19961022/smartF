@@ -5,39 +5,37 @@
 #include <map>
 #include <mutex>
 
+// ==================== 配置管理类 ====================
 class ConfigManager {
 public:
-    static ConfigManager& getInstance();
+    static ConfigManager& GetInstance();
 
-    // 加载配置文件
-    bool loadConfig(const std::string& configPath = "config/smartfridge.conf");
+    bool LoadConfig(const std::string& configPath = "config/smartfridge.conf");
 
-    // 获取配置值
-    std::string getString(const std::string& key, const std::string& defaultVal = "");
-    int getInt(const std::string& key, int defaultVal = 0);
-    float getFloat(const std::string& key, float defaultVal = 0.0f);
-    bool getBool(const std::string& key, bool defaultVal = false);
+    std::string GetString(const std::string& key, const std::string& defaultVal = "");
+    int GetInt(const std::string& key, int defaultVal = 0);
+    float GetFloat(const std::string& key, float defaultVal = 0.0f);
+    bool GetBool(const std::string& key, bool defaultVal = false);
 
-    // 设置配置值（运行时）
-    void setString(const std::string& key, const std::string& val);
-    void setInt(const std::string& key, int val);
-    void setFloat(const std::string& key, float val);
-    void setBool(const std::string& key, bool val);
+    void SetString(const std::string& key, const std::string& val);
+    void SetInt(const std::string& key, int val);
+    void SetFloat(const std::string& key, float val);
+    void SetBool(const std::string& key, bool val);
 
-    // 保存配置到文件
-    bool saveConfig(const std::string& configPath = "config/smartfridge.conf");
+    bool SaveConfig(const std::string& configPath = "config/smartfridge.conf");
 
 private:
     ConfigManager();
     ~ConfigManager();
+
     ConfigManager(const ConfigManager&) = delete;
     ConfigManager& operator=(const ConfigManager&) = delete;
 
-    std::map<std::string, std::string> config_;
-    std::mutex mutex_;
+    void TrimString(std::string& str);
+    void ParseLine(const std::string& line);
 
-    void trimString(std::string& str);
-    void parseLine(const std::string& line);
+    std::map<std::string, std::string> mConfig;
+    std::mutex mMutex;
 };
 
 #endif // CONFIG_MANAGER_H

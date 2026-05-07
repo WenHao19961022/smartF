@@ -7,21 +7,18 @@
 #include <string>
 #include <thread>
 
+// ==================== 摄像头模块类 ====================
 class CameraModule {
 public:
     static CameraModule& GetInstance();
 
-    // 获取最新的图像帧
     cv::Mat GetLatestFrame();
+    bool IsOpened() const { return mIsOpened.load(); }
 
-    // 摄像头状态查询
-    bool isOpened() const { return m_isOpened.load(); }
-
-    // 配置接口
-    void setCameraIndex(int index) { m_cameraIndex = index; }
-    void setResolution(int width, int height) {
-        m_width = width;
-        m_height = height;
+    void SetCameraIndex(int index) { mCameraIndex = index; }
+    void SetResolution(int width, int height) {
+        mWidth = width;
+        mHeight = height;
     }
 
 private:
@@ -31,23 +28,23 @@ private:
     CameraModule(const CameraModule&) = delete;
     CameraModule& operator=(const CameraModule&) = delete;
 
-    void captureThreadFunc();
-    bool openCamera();
-    void closeCamera();
+    void CaptureThreadFunc();
+    bool OpenCamera();
+    void CloseCamera();
 
-    int m_cameraIndex = 0;
-    int m_width = 640;
-    int m_height = 480;
+    int mCameraIndex = 0;
+    int mWidth = 640;
+    int mHeight = 480;
 
-    std::atomic<bool> m_running{false};
-    std::atomic<bool> m_isOpened{false};
-    std::atomic<bool> m_reconnectScheduled{false};
+    std::atomic<bool> mRunning{false};
+    std::atomic<bool> mIsOpened{false};
+    std::atomic<bool> mReconnectScheduled{false};
 
-    std::mutex m_frameMutex;
-    cv::Mat m_latestFrame;
+    std::mutex mFrameMutex;
+    cv::Mat mLatestFrame;
 
-    cv::VideoCapture m_capture;
-    std::thread m_captureThread;
+    cv::VideoCapture mCapture;
+    std::thread mCaptureThread;
 };
 
 #endif // CAMERA_MODEL_H

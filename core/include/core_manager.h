@@ -1,30 +1,36 @@
-#pragma once
+#ifndef CORE_MANAGER_H
+#define CORE_MANAGER_H
+
 #include <chrono>
 #include "./external_apis.h"
 #include "./inventory_manager.h"
 
+// ==================== 常量 ====================
+const uint32_t kFridgeDeviceId = 10001;
+const std::chrono::seconds kStaticInterval{2 * 3600};
+
+// ==================== 核心管理类 ====================
 class CoreManager {
+public:
+    void Init();
+    void Run();
+
 private:
-    bool running_ = true;
-    bool last_door_state_ = false;
-    bool is_static_waiting_ = false;
-    uint16_t base_weight_ = 0; // 开门前的基准重量
-    uint32_t door_open_timestamp_ = 0; // 记录本次开门时间戳（秒）
-    
-    uint32_t message_id_counter_ = 0; 
-    const uint32_t FRIDGE_DEVICE_ID = 10001; 
-
-    std::chrono::steady_clock::time_point last_static_time_;
-    const std::chrono::seconds STATIC_INTERVAL{2 * 3600};
-
-    InventoryManager inventory_manager_;
-
     void HandleDoorOpen();
     void HandleDoorClose();
     void CheckTimers();
-    void ProcessStaticResultOnly(); 
+    void ProcessStaticResultOnly();
 
-public:
-    void init();
-    void run();
+    bool mRunning = true;
+    bool mLastDoorState = false;
+    bool mIsStaticWaiting = false;
+    uint16_t mBaseWeight = 0;
+    uint32_t mDoorOpenTimestamp = 0;
+    uint32_t mMessageIdCounter = 0;
+
+    std::chrono::steady_clock::time_point mLastStaticTime;
+
+    InventoryManager mInventoryManager;
 };
+
+#endif // CORE_MANAGER_H

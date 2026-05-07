@@ -7,54 +7,49 @@
 #include "../include/message_sender_magager.h"
 #include <mqtt/async_client.h>
 
-MessageSenderManager& MessageSenderManager::GetInstance()
-{
+MessageSenderManager& MessageSenderManager::GetInstance() {
     static MessageSenderManager instance;
     return instance;
 }
 
-MessageSenderManager::MessageSenderManager()
-{
-    SenderInit();
+MessageSenderManager::MessageSenderManager() {
+    Init();
 }
 
-MessageSenderManager::~MessageSenderManager()
-{
+MessageSenderManager::~MessageSenderManager() {
     Disconnect();
 }
 
-void MessageSenderManager::SenderInit()
-{
-    m_initStatus.store(INITI_UNFINISHED);
-    m_SenderIdleStatus.store(SENDER_IDLE);
-    m_messageSendSwitch.store(MESSAGE_SEND_SWITCH_OFF);
-    m_connected.store(false);
+void MessageSenderManager::Init() {
+    mInitStatus.store(kInitUnfinished);
+    mSenderIdleStatus.store(kSenderIdle);
+    mMessageSendSwitch.store(kMessageSendSwitchOff);
+    mConnected.store(false);
 
-    m_dataMutex.lock();
-    m_message = {};
-    m_dataMutex.unlock();
+    mDataMutex.lock();
+    mMessage = {};
+    mDataMutex.unlock();
 
     // 尝试连接MQTT服务器
     if (Connect()) {
-        MessageSenderReady();
+        SetReady();
     } else {
-        MessageSenderReady();  // 即使连接失败也标记为ready，后续发送时重连
+        SetReady();  // 即使连接失败也标记为ready，后续发送时重连
     }
 }
 
-bool MessageSenderManager::Connect()
-{
-    std::lock_guard<std::mutex> lock(m_mqttMutex);
+bool MessageSenderManager::Connect() {
+    std::lock_guard<std::mutex> lock(mMqttMutex);
 
-    if (m_connected.load()) {
+    if (mConnected.load()) {
         return true;
     }
 
     try {
-        mqtt::async_client* client = new mqtt::async_client(MQTT_BROKER_ADDR, MQTT_CLIENT_ID);
+        mqtt::async_client* client = new mqtt::async_client(kMqttBrokerAddr, kMqttClientId);
 
         mqtt::connect_options connOpts;
-        connOpts.set_keep_alive_interval(std::chrono::seconds(MQTT_KEEPALIVE));
+        connOpts.set_keep_alive_interval(std::chrono::seconds(kMqttKeepalive));
         connOpts.set_clean_session(true);
         connOpts.set_automatic_reconnect(true);
 
@@ -63,9 +58,9 @@ bool MessageSenderManager::Connect()
         connectToken->wait_for(std::chrono::seconds(5));
 
         if (client->is_connected()) {
-            m_mqttClient = static_cast<void*>(client);
-            m_connected.store(true);
-            std::cout << "[MQTT] Successfully connected to broker: " << MQTT_BROKER_ADDR << std::endl;
+            mMqttClient = static_cast<void*>(client);
+            mConnected.store(true);
+            std::cout << "[MQTT] Successfully connected to broker: " << kMqttBrokerAddr << std::endl;
             return true;
         }
     } catch (const mqtt::exception& exc) {
@@ -77,23 +72,22 @@ bool MessageSenderManager::Connect()
     return false;
 }
 
-bool MessageSenderManager::Disconnect()
-{
-    std::lock_guard<std::mutex> lock(m_mqttMutex);
+bool MessageSenderManager::Disconnect() {
+    std::lock_guard<std::mutex> lock(mMqttMutex);
 
-    if (!m_connected.load() || m_mqttClient == nullptr) {
+    if (!mConnected.load() || mMqttClient == nullptr) {
         return true;
     }
 
     try {
-        mqtt::async_client* client = static_cast<mqtt::async_client*>(m_mqttClient);
+        mqtt::async_client* client = static_cast<mqtt::async_client*>(mMqttClient);
         if (client && client->is_connected()) {
             mqtt::token_ptr disconnectToken = client->disconnect();
             disconnectToken->wait_for(std::chrono::seconds(2));
         }
         delete client;
-        m_mqttClient = nullptr;
-        m_connected.store(false);
+        mMqttClient = nullptr;
+        mConnected.store(false);
         std::cout << "[MQTT] Disconnected from broker" << std::endl;
         return true;
     } catch (const mqtt::exception& exc) {
@@ -102,16 +96,14 @@ bool MessageSenderManager::Disconnect()
     }
 }
 
-void MessageSenderManager::CopyMessage(const MqttMessageStruct& message)
-{
-    std::lock_guard<std::mutex> lock(m_dataMutex);
-    m_message = message;
+void MessageSenderManager::CopyMessage(const MqttMessageStruct& message) {
+    std::lock_guard<std::mutex> lock(mDataMutex);
+    mMessage = message;
 }
 
-bool MessageSenderManager::SendMessage(const MqttMessageStruct& message)
-{
+bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
     // 如果未连接，尝试重连
-    if (!m_connected.load()) {
+    if (!mConnected.load()) {
         std::cout << "[MQTT] Not connected, attempting to reconnect..." << std::endl;
         if (!Connect()) {
             std::cerr << "[MQTT] Reconnection failed" << std::endl;
@@ -119,9 +111,9 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message)
         }
     }
 
-    std::lock_guard<std::mutex> lock(m_mqttMutex);
+    std::lock_guard<std::mutex> lock(mMqttMutex);
 
-    if (m_mqttClient == nullptr) {
+    if (mMqttClient == nullptr) {
         std::cerr << "[MQTT] Client is null" << std::endl;
         return false;
     }
@@ -130,22 +122,22 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message)
         // 序列化为JSON
         std::string jsonPayload = SerializeMqttMessageToJson(message);
 
-        mqtt::async_client* client = static_cast<mqtt::async_client*>(m_mqttClient);
+        mqtt::async_client* client = static_cast<mqtt::async_client*>(mMqttClient);
 
         // 发布消息
-        mqtt::message_ptr pubmsg = mqtt::make_message(MQTT_TOPIC, jsonPayload);
-        pubmsg->set_qos(MQTT_QOS);
+        mqtt::message_ptr pubmsg = mqtt::make_message(kMqttTopic, jsonPayload);
+        pubmsg->set_qos(kMqttQos);
 
         mqtt::token_ptr pubToken = client->publish(pubmsg);
         pubToken->wait_for(std::chrono::seconds(3));
 
-        std::cout << "[MQTT] Message published successfully to topic: " << MQTT_TOPIC << std::endl;
+        std::cout << "[MQTT] Message published successfully to topic: " << kMqttTopic << std::endl;
         std::cout << "[MQTT] Payload size: " << jsonPayload.size() << " bytes" << std::endl;
         return true;
 
     } catch (const mqtt::exception& exc) {
         std::cerr << "[MQTT] Publish error: " << exc.what() << std::endl;
-        m_connected.store(false);
+        mConnected.store(false);
         return false;
     } catch (const std::exception& e) {
         std::cerr << "[MQTT] Standard exception during publish: " << e.what() << std::endl;
@@ -153,38 +145,32 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message)
     }
 }
 
-void MessageSenderManager::MainLoop()
-{
-    while (true)
-    {
-        if (IsMessageSendSwitchOn() && IsMessageSenderIdle())
-        {
-            SetMessageSenderStatus(SENDER_BUSY);
+void MessageSenderManager::MainLoop() {
+    while (true) {
+        if (IsMessageSendSwitchOn() && IsIdle()) {
+            SetSenderStatus(kSenderBusy);
 
-            m_dataMutex.lock();
-            MqttMessageStruct messageToSend = m_message;
-            m_dataMutex.unlock();
+            mDataMutex.lock();
+            MqttMessageStruct messageToSend = mMessage;
+            mDataMutex.unlock();
 
             uint8_t messageSendCount = 0;
             uint8_t maxMessageSendCount = 3;
 
-            while (true)
-            {
-                if (SendMessage(messageToSend))
-                {
+            while (true) {
+                if (SendMessage(messageToSend)) {
                     break;
                 }
                 messageSendCount++;
-                if (messageSendCount >= maxMessageSendCount)
-                {
+                if (messageSendCount >= maxMessageSendCount) {
                     std::cerr << "[MQTT] Failed to send message after " << maxMessageSendCount << " attempts" << std::endl;
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
             }
 
-            SetMessageSendSwitch(MESSAGE_SEND_SWITCH_OFF);
-            SetMessageSenderStatus(SENDER_IDLE);
+            SetMessageSendSwitch(kMessageSendSwitchOff);
+            SetSenderStatus(kSenderIdle);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -199,9 +185,9 @@ std::string FruitTypeToString(FruitType type) {
 
 uint8_t FreshnessLevelToScore(FreshnessLevel level) {
     switch (level) {
-        case FreshnessLevel::FRESH: return 10;
-        case FreshnessLevel::STALE: return 5;
-        case FreshnessLevel::ROTTEN: return 0;
+        case FreshnessLevel::Fresh: return 10;
+        case FreshnessLevel::Stale: return 5;
+        case FreshnessLevel::Rotten: return 0;
         default: return 8;
     }
 }
@@ -274,23 +260,6 @@ std::string SerializeMqttMessageToJson(const MqttMessageStruct& message) {
             json << ",";
         }
         json << "\n";
-    }
-
-    // 添加空的占位水果（如果数量小于MAX_STATIC_FRUIT_COUNT）
-    if (message.fruitCount < MAX_STATIC_FRUIT_COUNT) {
-        for (uint8_t i = message.fruitCount; i < MAX_STATIC_FRUIT_COUNT; ++i) {
-            json << "    {\n";
-            json << "      \"id\": \"\",\n";
-            json << "      \"type\": \"\",\n";
-            json << "      \"fresh_status\": \"\",\n";
-            json << "      \"weight\": \"\"\n";
-            json << "    }";
-
-            if (i < MAX_STATIC_FRUIT_COUNT - 1) {
-                json << ",";
-            }
-            json << "\n";
-        }
     }
 
     json << "  ]\n";

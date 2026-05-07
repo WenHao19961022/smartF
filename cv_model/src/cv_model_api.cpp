@@ -1,59 +1,46 @@
 #include "../include/cv_model_manager.h"
 #include "../api/cv_model_api.h"
 
-bool CvModelInit()
-{
+bool CvModelInit() {
     return CvModelManager::GetInstance().CvModelInit();
 }
 
-void CvModelMainLoop()
-{
+void CvModelMainLoop() {
     CvModelManager::GetInstance().MainLoop();
 }
 
-bool IsCvModelReady()
-{
+bool IsCvModelReady() {
     return CvModelManager::GetInstance().IsCvModelReady();
 }
 
-void StartStaticRecognition()
-{
-    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(RECOGNITION_SWITCH_ON);
+void StartStaticRecognition() {
+    CvModelManager::GetInstance().SetStaticRecognitionSwitch(kRecognitionSwitchOn);
 }
 
-void StartDynamicRecognition()
-{
-    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(RECOGNITION_SWITCH_ON);
+void StartDynamicRecognition() {
+    CvModelManager::GetInstance().SetDynamicRecognitionSwitch(kRecognitionSwitchOn);
 }
 
-void StopStaticRecognition()
-{
-    return CvModelManager::GetInstance().SetStaticRecognitionSwitch(RECOGNITION_SWITCH_OFF);
+void StopStaticRecognition() {
+    CvModelManager::GetInstance().SetStaticRecognitionSwitch(kRecognitionSwitchOff);
 }
 
-void StopDynamicRecognition()
-{
-    return CvModelManager::GetInstance().SetDynamicRecognitionSwitch(RECOGNITION_SWITCH_OFF);
+void StopDynamicRecognition() {
+    CvModelManager::GetInstance().SetDynamicRecognitionSwitch(kRecognitionSwitchOff);
 }
 
-bool IsStaticRecognitionIdle()
-{
+bool IsStaticRecognitionIdle() {
     return CvModelManager::GetInstance().IsStaticRecognitionIdle();
 }
 
-bool IsDynamicRecognitionIdle()
-{
+bool IsDynamicRecognitionIdle() {
     return CvModelManager::GetInstance().IsDynamicRecognitionIdle();
 }
 
-// 读取静态识别结果的函数，core可以调用该函数获取最新的静态识别结果
-StaticRecognitionResult GetStaticRecognitionResult()
-{
+StaticRecognitionResult GetStaticRecognitionResult() {
     return CvModelManager::GetInstance().GetStaticResult();
 }
 
-// 读取动态识别结果的函数，core可以调用该函数获取最新的动态识别结果
-DynamicRecognitionResult GetDynamicRecognitionResult()
-{
+DynamicRecognitionResult GetDynamicRecognitionResult() {
     return CvModelManager::GetInstance().GetDynamicResult();
 }

@@ -1,81 +1,68 @@
 #ifndef CV_MODEL_API_H
 #define CV_MODEL_API_H
 
-#include <cstdint> // 包含cstdint头文件以使用固定宽度整数类型
+#include <cstdint>
 
-const static uint8_t MAX_STATIC_FRUIT_COUNT = 10; // 定义一个常量，表示最大识别水果数量
-const static uint8_t MAX_DYNAMIC_FRUIT_COUNT = 5; // 定义一个常量，表示动态识别最大识别水果数量
+// ==================== 常量 ====================
+const uint8_t kMaxStaticFruitCount = 10;
+const uint8_t kMaxDynamicFruitCount = 5;
 
-// 水果枚举（值与JSON中的type字符串对应）
+// ==================== 枚举 ====================
 enum class FruitType : uint8_t {
-    APPLE  = 1,   // type显示为"1"
-    BANANA = 2,   // type显示为"2"
-    ORANGE = 3,   // type显示为"3"
-    GRAPE  = 4,   // type显示为"4"
-    PEAR   = 5,   // type显示为"5"
-    MANGO  = 6,   // type显示为"6"
-    // 其他水果类型
+    Apple  = 1,
+    Banana = 2,
+    Orange = 3,
+    Grape  = 4,
+    Pear   = 5,
+    Mango  = 6
 };
 
-// 水果新鲜度枚举
 enum class FreshnessLevel : uint8_t {
-    FRESH = 0,
-    STALE = 1,
-    ROTTEN = 2,
-    // 其他新鲜度等级
+    Fresh  = 0,
+    Stale  = 1,
+    Rotten = 2
 };
 
-// 水果识别信息结构体
+// ==================== 结构体 ====================
 struct FruitInfo {
-    FruitType fruitType; // 水果的类型
-    uint8_t locationX; // 水果在图像中的X坐标
-    uint8_t locationY; // 水果在图像中的Y坐标
-    FreshnessLevel freshness; // 水果的新鲜度，范围可以是
-    // 其他水果相关的数据成员
+    FruitType fruitType;
+    uint8_t locationX;
+    uint8_t locationY;
+    FreshnessLevel freshness;
 };
 
-struct FruitInfoWithWeight
-{
-    FruitInfo fruitInfo; // 水果的基本信息
-    uint32_t weight; // 水果的重量
+struct FruitInfoWithWeight {
+    FruitInfo fruitInfo;
+    uint32_t weight;
 };
 
 struct FruitInfoWithTimestamp {
-    uint32_t timestamp; // 识别结果的时间戳
-    FruitInfo fruitInfo; // 水果的基本信息
-    // 其他水果相关的数据成员
+    uint32_t timestamp;
+    FruitInfo fruitInfo;
 };
 
-// 静态识别数据传输结构体定义
 struct StaticRecognitionResult {
-    uint32_t timestamp; // 识别结果的时间戳
-    uint8_t fruitCount; // 识别到的水果数量
-    FruitInfo fruits[MAX_STATIC_FRUIT_COUNT]; // 识别到的水果信息数组，假设最多识别10个水果
+    uint32_t timestamp;
+    uint8_t fruitCount;
+    FruitInfo fruits[kMaxStaticFruitCount];
 };
 
-// 动态识别数据传输结构体定义
 struct DynamicRecognitionResult {
-    uint8_t fruitCount; // 识别到的水果数量
-    FruitInfoWithTimestamp fruitInfoWithTimestamp[MAX_DYNAMIC_FRUIT_COUNT]; // 识别到的水果信息数组，假设最多识别5个水果
-    // 其他动态识别相关的数据成员
+    uint8_t fruitCount;
+    FruitInfoWithTimestamp fruitInfoWithTimestamp[kMaxDynamicFruitCount];
 };
 
-bool CvModelInit(); // 模型初始化函数，core可以调用该函数来初始化cv_model，例如加载模型、分配资源等
-
-void CvModelMainLoop(); // 主循环函数，core可以调用该函数来处理cv_model的主循环逻辑，例如执行识别任务、更新状态等
-
-// cv_model 与 core通讯flag, 用于指示cv_model的状态，或告知cv_model执行某些操作
-bool IsCvModelReady(); // 检查cv_model是否准备就绪，core可以调用该函数检查cv_model的状态
-void StartStaticRecognition(); // 启动cv_model的静态识别，core可以调用该函数启动静态识别
-void StartDynamicRecognition(); // 启动cv_model的动态识别，core可以调用该函数启动动态识别
-void StopStaticRecognition(); // 停止cv_model的静态识别，core可以调用该函数停止静态识别
-void StopDynamicRecognition(); // 停止cv_model的动态识别，core可以调用该函数停止动态识别
-bool IsStaticRecognitionIdle(); // 检查cv_model静态识别状态
-bool IsDynamicRecognitionIdle(); // 检查cv_model的动态识别状态
-
-// 读取静态识别结果的函数，core可以调用该函数获取最新的静态识别结果
+// ==================== API函数 ====================
+bool CvModelInit();
+void CvModelMainLoop();
+bool IsCvModelReady();
+void StartStaticRecognition();
+void StartDynamicRecognition();
+void StopStaticRecognition();
+void StopDynamicRecognition();
+bool IsStaticRecognitionIdle();
+bool IsDynamicRecognitionIdle();
 StaticRecognitionResult GetStaticRecognitionResult();
-// 读取动态识别结果的函数，core可以调用该函数获取最新的动态识别结果
 DynamicRecognitionResult GetDynamicRecognitionResult();
 
 #endif // CV_MODEL_API_H

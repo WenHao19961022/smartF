@@ -17,28 +17,27 @@ CvModelManager::~CvModelManager() {
 }
 
 bool CvModelManager::CvModelInit() {
-    m_initStatus.store(INITI_UNFINISHED);
+    mInitStatus.store(kInitUnfinished);
 
-    m_staticRecognitionSwitch.store(RECOGNITION_SWITCH_OFF);
-    m_dynamicecognitionSwitch.store(RECOGNITION_SWITCH_OFF);
-    m_staticRecognitionStatus.store(RECOGNITION_IDLE);
-    m_dynamicecognitionStatus.store(RECOGNITION_IDLE);
+    mStaticRecognitionSwitch.store(kRecognitionSwitchOff);
+    mDynamicRecognitionSwitch.store(kRecognitionSwitchOff);
+    mStaticRecognitionStatus.store(kRecognitionIdle);
+    mDynamicRecognitionStatus.store(kRecognitionIdle);
 
-    m_dataMutex.lock();
-    m_staticRecognitionResult = {};
-    m_dynamicRecognitionResult = {};
-    m_dataMutex.unlock();
+    mDataMutex.lock();
+    mStaticRecognitionResult = {};
+    mDynamicRecognitionResult = {};
+    mDataMutex.unlock();
 
     try {
-        m_inferenceEngine = std::make_unique<InferenceEngine>("cv_model/yolov8/yolo12n.engine");
-        CvModelReady();
+        mInferenceEngine = std::make_unique<InferenceEngine>("cv_model/yolov8/yolo12n.engine");
+        SetReady();
         std::cout << "[CvModelManager] TensorRT Engine Initialized Successfully." << std::endl;
         return true;
-    }
-    catch (const std::exception& e) {
+    } catch (const std::exception& e) {
         std::cerr << "[CvModelManager] TensorRT init failed: " << e.what() << std::endl;
         std::cerr << "[CvModelManager] CV Model running in simulation mode." << std::endl;
-        CvModelReady();
+        SetReady();
         return true;
     }
 }
@@ -62,9 +61,6 @@ void CvModelManager::MainLoop() {
     }
 }
 
-// YOLO后处理：从原始TensorRT输出提取水果检测结果
-// YOLOv8输出: [batch, 84, num_proposals] 其中84=4(box)+80(classes)
-// 实际使用时需根据模型实际输出维度调整
 static std::vector<FruitInfo> PostProcessYOLO(
     const std::vector<float>& output,
     const std::vector<int>& outputDims,
@@ -78,9 +74,9 @@ static std::vector<FruitInfo> PostProcessYOLO(
     }
 
     int numProposals = outputDims[2];
-    int numClasses = outputDims[1] - 4;  // 4个box参数 + N个类别
+    int numClasses = outputDims[1] - 4;
 
-    const int NUM_FRUIT_CLASSES = 6;  // APPLE, BANANA, ORANGE, GRAPE, PEAR, MANGO
+    const int kNumFruitClasses = 6;
 
     struct Detection {
         float cx, cy, w, h;
@@ -89,18 +85,16 @@ static std::vector<FruitInfo> PostProcessYOLO(
     };
     std::vector<Detection> detections;
 
-    // 遍历所有proposals，提取检测结果
     for (int i = 0; i < numProposals; ++i) {
         float cx = output[i];
         float cy = output[numProposals + i];
         float bw = output[2 * numProposals + i];
         float bh = output[3 * numProposals + i];
 
-        // 找最大类别置信度
         float maxConf = 0.0f;
         int maxClassId = 0;
 
-        for (int c = 0; c < std::min(numClasses, NUM_FRUIT_CLASSES); ++c) {
+        for (int c = 0; c < std::min(numClasses, kNumFruitClasses); ++c) {
             float conf = output[(4 + c) * numProposals + i];
             if (conf > maxConf) {
                 maxConf = conf;
@@ -113,7 +107,6 @@ static std::vector<FruitInfo> PostProcessYOLO(
         }
     }
 
-    // 简化的NMS
     std::vector<bool> suppressed(detections.size(), false);
 
     for (size_t i = 0; i < detections.size(); ++i) {
@@ -124,11 +117,10 @@ static std::vector<FruitInfo> PostProcessYOLO(
         info.fruitType = static_cast<FruitType>(det.classId + 1);
         info.locationX = static_cast<uint8_t>(std::min(255, static_cast<int>(det.cx)));
         info.locationY = static_cast<uint8_t>(std::min(255, static_cast<int>(det.cy)));
-        info.freshness = FreshnessLevel::FRESH;  // 简化：默认新鲜，真实模型需输出新鲜度
+        info.freshness = FreshnessLevel::Fresh;
 
         results.push_back(info);
 
-        // 抑制同类重叠检测
         for (size_t j = i + 1; j < detections.size(); ++j) {
             if (suppressed[j] || detections[j].classId != det.classId) continue;
 
@@ -146,7 +138,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
 }
 
 void CvModelManager::StaticRecognitionInternal() {
-    SetStaticRecognitionStatus(RECOGNITION_BUSY);
+    SetStaticRecognitionStatus(kRecognitionBusy);
 
     cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
     StaticRecognitionResult result = {};
@@ -154,13 +146,12 @@ void CvModelManager::StaticRecognitionInternal() {
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
-    if (!frame.empty() && m_inferenceEngine) {
+    if (!frame.empty() && mInferenceEngine) {
         std::vector<float> rawOutput;
-        if (m_inferenceEngine->Infer(frame, rawOutput)) {
-            auto detections = PostProcessYOLO(rawOutput, m_inferenceEngine->GetOutputDims());
+        if (mInferenceEngine->Infer(frame, rawOutput)) {
+            auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
 
-            result.fruitCount = std::min(static_cast<uint8_t>(detections.size()),
-                                        MAX_STATIC_FRUIT_COUNT);
+            result.fruitCount = std::min(static_cast<uint8_t>(detections.size()), kMaxStaticFruitCount);
             for (uint8_t i = 0; i < result.fruitCount; ++i) {
                 result.fruits[i] = detections[i];
             }
@@ -168,46 +159,44 @@ void CvModelManager::StaticRecognitionInternal() {
             std::cout << "[CvModel] Static: Detected " << (int)result.fruitCount << " fruits" << std::endl;
         }
     } else if (!frame.empty()) {
-        // 模拟模式（无TensorRT引擎时）
         result.fruitCount = 2;
-        result.fruits[0].fruitType = FruitType::ORANGE;
+        result.fruits[0].fruitType = FruitType::Orange;
         result.fruits[0].locationX = 120;
         result.fruits[0].locationY = 100;
-        result.fruits[0].freshness = FreshnessLevel::FRESH;
+        result.fruits[0].freshness = FreshnessLevel::Fresh;
 
-        result.fruits[1].fruitType = FruitType::BANANA;
+        result.fruits[1].fruitType = FruitType::Banana;
         result.fruits[1].locationX = 200;
         result.fruits[1].locationY = 150;
-        result.fruits[1].freshness = FreshnessLevel::STALE;
+        result.fruits[1].freshness = FreshnessLevel::Stale;
 
         std::cout << "[CvModel] Static (SIM): Detected " << (int)result.fruitCount << " fruits" << std::endl;
     }
 
     {
-        std::lock_guard<std::mutex> lock(m_dataMutex);
-        m_staticRecognitionResult = result;
+        std::lock_guard<std::mutex> lock(mDataMutex);
+        mStaticRecognitionResult = result;
     }
 
-    SetStaticRecognitionStatus(RECOGNITION_IDLE);
+    SetStaticRecognitionStatus(kRecognitionIdle);
 }
 
 void CvModelManager::DynamicRecognitionInternal() {
-    SetDynamicRecognitionStatus(RECOGNITION_BUSY);
+    SetDynamicRecognitionStatus(kRecognitionBusy);
 
     cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
     DynamicRecognitionResult result = {};
 
-    if (!frame.empty() && m_inferenceEngine) {
+    if (!frame.empty() && mInferenceEngine) {
         std::vector<float> rawOutput;
-        if (m_inferenceEngine->Infer(frame, rawOutput)) {
-            auto detections = PostProcessYOLO(rawOutput, m_inferenceEngine->GetOutputDims());
+        if (mInferenceEngine->Infer(frame, rawOutput)) {
+            auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
 
             uint32_t timestamp = static_cast<uint32_t>(
                 std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
 
-            result.fruitCount = std::min(static_cast<uint8_t>(detections.size()),
-                                        MAX_DYNAMIC_FRUIT_COUNT);
+            result.fruitCount = std::min(static_cast<uint8_t>(detections.size()), kMaxDynamicFruitCount);
             for (uint8_t i = 0; i < result.fruitCount; ++i) {
                 result.fruitInfoWithTimestamp[i].timestamp = timestamp;
                 result.fruitInfoWithTimestamp[i].fruitInfo = detections[i];
@@ -216,13 +205,12 @@ void CvModelManager::DynamicRecognitionInternal() {
             std::cout << "[CvModel] Dynamic: Tracked " << (int)result.fruitCount << " fruits" << std::endl;
         }
     } else if (!frame.empty()) {
-        // 模拟模式
         result.fruitCount = 1;
         result.fruitInfoWithTimestamp[0].timestamp = static_cast<uint32_t>(
             std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
-        result.fruitInfoWithTimestamp[0].fruitInfo.fruitType = FruitType::APPLE;
-        result.fruitInfoWithTimestamp[0].fruitInfo.freshness = FreshnessLevel::FRESH;
+        result.fruitInfoWithTimestamp[0].fruitInfo.fruitType = FruitType::Apple;
+        result.fruitInfoWithTimestamp[0].fruitInfo.freshness = FreshnessLevel::Fresh;
         result.fruitInfoWithTimestamp[0].fruitInfo.locationX = 150;
         result.fruitInfoWithTimestamp[0].fruitInfo.locationY = 120;
 
@@ -230,19 +218,19 @@ void CvModelManager::DynamicRecognitionInternal() {
     }
 
     {
-        std::lock_guard<std::mutex> lock(m_dataMutex);
-        m_dynamicRecognitionResult = result;
+        std::lock_guard<std::mutex> lock(mDataMutex);
+        mDynamicRecognitionResult = result;
     }
 
-    SetDynamicRecognitionStatus(RECOGNITION_IDLE);
+    SetDynamicRecognitionStatus(kRecognitionIdle);
 }
 
 StaticRecognitionResult CvModelManager::GetStaticResult() {
-    std::lock_guard<std::mutex> lock(m_dataMutex);
-    return m_staticRecognitionResult;
+    std::lock_guard<std::mutex> lock(mDataMutex);
+    return mStaticRecognitionResult;
 }
 
 DynamicRecognitionResult CvModelManager::GetDynamicResult() {
-    std::lock_guard<std::mutex> lock(m_dataMutex);
-    return m_dynamicRecognitionResult;
+    std::lock_guard<std::mutex> lock(mDataMutex);
+    return mDynamicRecognitionResult;
 }
