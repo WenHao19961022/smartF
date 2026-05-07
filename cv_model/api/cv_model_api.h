@@ -57,6 +57,8 @@ struct DynamicRecognitionResult {
     // 其他动态识别相关的数据成员
 };
 
+void CvModelInit(); // 模型初始化函数，core可以调用该函数来初始化cv_model，例如加载模型、分配资源等
+
 void CvModelMainLoop(); // 主循环函数，core可以调用该函数来处理cv_model的主循环逻辑，例如执行识别任务、更新状态等
 
 // cv_model 与 core通讯flag, 用于指示cv_model的状态，或告知cv_model执行某些操作

@@ -20,15 +20,15 @@ public:
     ~InferenceEngine();
 
     // 执行异步推理
-    bool infer(const cv::Mat& frame, std::vector<float>& outputData);
+    bool Infer(const cv::Mat& frame, std::vector<float>& outputData);
 
     // 获取模型输入输出尺寸，供外部后处理参考
-    std::vector<int> getInputDims() const { return m_inputDims; }
-    std::vector<int> getOutputDims() const { return m_outputDims; }
+    std::vector<int> GetInputDims() const { return m_inputDims; }
+    std::vector<int> GetOutputDims() const { return m_outputDims; }
 
 private:
-    bool loadEngine(const std::string& path);
-    void preprocess(const cv::Mat& frame, float* gpuInput);
+    bool LoadEngine(const std::string& path);
+    void Preprocess(const cv::Mat& frame, float* gpuInput);
 
     TRTLogger m_logger;
     nvinfer1::IRuntime* m_runtime = nullptr;

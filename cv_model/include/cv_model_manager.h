@@ -1,6 +1,7 @@
 #ifndef CV_MODEL_MANAGER_H
 #define CV_MODEL_MANAGER_H
 
+#include "../include/inference_engine.h"
 #include "../api/cv_model_api.h"
 #include <mutex>
 #include <atomic>
@@ -67,6 +68,8 @@ private:
     std::atomic<bool> m_dynamicecognitionSwitch{RECOGNITION_SWITCH_OFF};
     std::atomic<bool> m_staticRecognitionStatus{RECOGNITION_IDLE};
     std::atomic<bool> m_dynamicecognitionStatus{RECOGNITION_IDLE};
+
+    std::unique_ptr<InferenceEngine> m_inferenceEngine = nullptr;
 
     void CvModelReady() { m_initStatus.store(INITI_FINISHED); }
 

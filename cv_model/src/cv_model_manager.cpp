@@ -1,15 +1,7 @@
 #include "../include/cv_model_manager.h"
-#include "../include/inference_engine.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
-
-/**
- * 静态成员定义（如果不在头文件中定义，则需在此声明）
- * 建议在头文件中声明 std::unique_ptr<InferenceEngine> m_enginePtr;
- */
-static std::unique_ptr<InferenceEngine> g_staticEngine = nullptr;
-static std::unique_ptr<InferenceEngine> g_dynamicEngine = nullptr;
 
 // 构造函数
 CvModelManager::CvModelManager()
@@ -23,7 +15,7 @@ CvModelManager::~CvModelManager()
     // unique_ptr 会自动处理 InferenceEngine 的释放
 }
 
-void CvModelManager::CvModelInit()
+bool CvModelManager::CvModelInit()
 {
     m_initStatus.store(INITI_UNFINISHED);
     
@@ -36,10 +28,7 @@ void CvModelManager::CvModelInit()
     try {
         // 1. 实例化推理引擎 (路径需根据 Jetson 实际路径调整)
         // 这里可以根据需要加载不同的模型文件
-        g_staticEngine = std::make_unique<InferenceEngine>("yolo12n.engine");
-        
-        // 如果动态识别使用不同模型，则加载另一个
-        // g_dynamicEngine = std::make_unique<InferenceEngine>("yolo12n_dynamic.engine");
+        m_inferenceEngine = std::make_unique<InferenceEngine>("cv_model/yolov8/yolo12n.engine");
 
         // 2. 清空结果缓冲区
         {
@@ -51,10 +40,13 @@ void CvModelManager::CvModelInit()
         // 3. 标记初始化完成
         CvModelReady();
         std::cout << "[CvModelManager] TensorRT Engine Initialized Successfully." << std::endl;
+        return true;
     }
     catch (const std::exception& e) {
         std::cerr << "[CvModelManager] Critical Error during Init: " << e.what() << std::endl;
+        return false;
     }
+    return false;
 }
 
 CvModelManager& CvModelManager::GetInstance()
@@ -100,7 +92,7 @@ void CvModelManager::StaticRecognitionInternal()
         std::vector<float> rawOutput;
         
         // 2. 调用封装好的推理引擎
-        if (g_staticEngine && g_staticEngine->infer(frame, rawOutput)) {
+        if (m_inferenceEngine && m_inferenceEngine->Infer(frame, rawOutput)) {
             
             // 3. 后处理 (解析 YOLO 格式输出)
             // 这里需要根据 YOLO12 的输出 Tensor 结构进行解析
@@ -121,9 +113,9 @@ void CvModelManager::DynamicRecognitionInternal()
 
     // 动态识别逻辑：通常涉及跨帧跟踪或更频繁的检测
     cv::Mat frame;
-    if (!frame.empty() && g_staticEngine) {
+    if (!frame.empty() && m_inferenceEngine) {
         std::vector<float> rawOutput;
-        g_staticEngine->infer(frame, rawOutput);
+        m_inferenceEngine->Infer(frame, rawOutput);
         
         std::lock_guard<std::mutex> lock(m_dataMutex);
         // 更新 m_dynamicRecognitionResult

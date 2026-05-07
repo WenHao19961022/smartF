@@ -1,6 +1,11 @@
 #include "../include/cv_model_manager.h"
 #include "../api/cv_model_api.h"
 
+void CvModelInit()
+{
+    CvModelManager::GetInstance().CvModelInit();
+}
+
 void CvModelMainLoop()
 {
     CvModelManager::GetInstance().MainLoop();

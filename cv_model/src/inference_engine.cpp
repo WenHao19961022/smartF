@@ -3,7 +3,7 @@
 #include <iostream>
 
 InferenceEngine::InferenceEngine(const std::string& enginePath) {
-    if (!loadEngine(enginePath)) {
+    if (!LoadEngine(enginePath)) {
         throw std::runtime_error("Failed to load TensorRT engine: " + enginePath);
     }
 }
@@ -23,7 +23,7 @@ InferenceEngine::~InferenceEngine() {
     if (m_runtime) delete m_runtime;
 }
 
-bool InferenceEngine::loadEngine(const std::string& path) {
+bool InferenceEngine::LoadEngine(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.good()) return false;
 
@@ -76,7 +76,7 @@ bool InferenceEngine::loadEngine(const std::string& path) {
     return true;
 }
 
-bool InferenceEngine::infer(const cv::Mat& frame, std::vector<float>& outputData) {
+bool InferenceEngine::Infer(const cv::Mat& frame, std::vector<float>& outputData) {
     if (frame.empty()) return false;
 
     // 1. 预处理 (Resize to m_inputDims[2]x[3], BGR to RGB, Normalize)
@@ -88,7 +88,7 @@ bool InferenceEngine::infer(const cv::Mat& frame, std::vector<float>& outputData
     cudaMemcpyAsync(m_gpuBuffers[0], blob.data, m_inputSizeBytes, cudaMemcpyHostToDevice, m_stream);
 
     // 3. 执行推理 (使用 enqueueV3 替代已弃用的 enqueueV2)
-    // 注意：enqueueV3 依赖前面 loadEngine 中 setTensorAddress 的设置
+    // 注意：enqueueV3 依赖前面 LoadEngine 中 setTensorAddress 的设置
     m_context->enqueueV3(m_stream);
 
     // 4. 数据拷贝 (D2H)
