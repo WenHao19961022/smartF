@@ -14,6 +14,7 @@ const bool kRecognitionSwitchOn = true;
 const bool kRecognitionSwitchOff = false;
 const bool kRecognitionIdle = true;
 const bool kRecognitionBusy = false;
+const int kStaticDetectionCount = 5;
 
 // ==================== CV模型管理类 ====================
 class CvModelManager {
