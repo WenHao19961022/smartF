@@ -5,6 +5,8 @@
 #include <ctime>
 #include <algorithm>
 #include <atomic>
+#include "../include/core_log.h"
+#include <string>
 
 // 初始化随机数种子
 namespace {
@@ -19,23 +21,26 @@ namespace {
 static std::atomic<uint16_t> gMsgCounter(0);
 
 void CoreManager::Init() {
+    LOG_START("初始化开始");
     FrigeratorHistoryInfo initialInfo = GetFrigeratorInfo();
     mLastDoorState = (initialInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
     mLastStaticTime = std::chrono::steady_clock::now();
-
+    LOG_WARN("等待 CV 模型就绪...");
     while (!IsCvModelReady()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    std::cout << "[Core] 就绪接管！" << std::endl;
+    LOG_OK("CV 模型已就绪，Core 接管控制权！");
 }
 
 void CoreManager::Run() {
+    LOG_START("进入主循环");
     while (mRunning) {
         // 实时获取底层硬件状态（以最新的一次为准）
         FrigeratorHistoryInfo currInfo = GetFrigeratorInfo();
         bool currentDoorState = (currInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
 
         if (currentDoorState != mLastDoorState) {               // 门状态变化，触发对应事件
+            LOG_INFO(std::string("门状态突变触发: ") + (currentDoorState ? "关->开" : "开->关"));
             if (currentDoorState == true) {                       // 开门事件
                 // 记录开门瞬间的重量作为基准
                 mBaseWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
@@ -59,14 +64,19 @@ void CoreManager::Run() {
 }
 
 void CoreManager::HandleDoorOpen() {
+    LOG_START("处理开门逻辑");
     mIsStaticWaiting = false;
     // 记录开门瞬间时间戳（秒）作为本次批次基准
     mDoorOpenTimestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                              std::chrono::system_clock::now().time_since_epoch()).count());
+    mBaseWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
+    LOG_DATA(std::string("开门瞬间抓取基准重量: ") + std::to_string(mBaseWeight) + "g, 时间戳: " + std::to_string(mDoorOpenTimestamp));
     StartDynamicRecognition();
+    LOG_OK("HandleDoorOpen() - 执行完毕");
 }
 
 void CoreManager::HandleDoorClose() {
+    LOG_START("处理关门逻辑 (启动动态对账)");
     StopDynamicRecognition();
 
     while (!IsDynamicRecognitionIdle()) {
@@ -87,9 +97,6 @@ void CoreManager::HandleDoorClose() {
     // 计算净重跳变（相对于开门时的基准）
     int32_t weightDelta = static_cast<int32_t>(currentWeight) - static_cast<int32_t>(mBaseWeight);
 
-    uint32_t now = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
-
     // 动态对账：从动态 CV 结果推断交互的水果种类（一次只交互一种）
     if (dyn.fruitCount > 0) {
         FruitType interactedType = dyn.fruitInfoWithTimestamp[0].fruitInfo.fruitType;
@@ -101,7 +108,7 @@ void CoreManager::HandleDoorClose() {
         mInventoryManager.HandleDynamicEvent(interactedType, weightDelta, countDelta, mDoorOpenTimestamp, static_cast<int32_t>(currentWeight));
     } else {
         if (weightDelta != 0) {
-            std::cout << "[Warning] Weight changed but CV saw no dynamic action!" << std::endl;
+            LOG_WARN("Weight changed but CV saw no dynamic action!");
         }
     }
 
@@ -143,24 +150,28 @@ void CoreManager::HandleDoorClose() {
 
     SendMqttMessage(msg);
 
-    // Debug Print
-    std::cout << "[MQTT] Sent MsgID: " << msg.messageId << " | Fruit Count: " << (int)msg.fruitCount
-              << " | FridgeWeight: " << msg.fridgeInfo.weight << "g" << std::endl;
+    // Debug Print -> log
+    LOG_INFO(std::string("Sent MsgID: ") + std::to_string(msg.messageId) + " | Fruit Count: " + std::to_string((int)msg.fruitCount)
+             + " | FridgeWeight: " + std::to_string(msg.fridgeInfo.weight) + "g");
     for (auto const& [t, w] : avgWeights) {
-        std::cout << "[MQTT] Avg Weight Type " << (int)t << ": " << w << "g" << std::endl;
+        LOG_INFO(std::string("Avg Weight Type ") + std::to_string((int)t) + ": " + std::to_string(w) + "g");
     }
+    LOG_OK("动态对账流水写入并已发送 MQTT 报文");
 }
 
 void CoreManager::CheckTimers() {
     auto now = std::chrono::steady_clock::now();
     if (std::chrono::duration_cast<std::chrono::seconds>(now - mLastStaticTime) >= kStaticInterval) {
+        LOG_START("触发2小时定时静态盘点");
         StartStaticRecognition();
         mIsStaticWaiting = true;
         mLastStaticTime = now;
+        LOG_OK("定时拍照指令已下发");
     }
 }
 
 void CoreManager::ProcessStaticResultOnly() {
+    LOG_START("收到静态照片，开始终极对账");
     mIsStaticWaiting = false;
     StaticRecognitionResult stat = GetStaticRecognitionResult();
 
@@ -199,6 +210,6 @@ void CoreManager::ProcessStaticResultOnly() {
     }
 
     SendMqttMessage(mqttMsg);
-    std::cout << "[MQTT] Sent MsgID: " << mqttMsg.messageId << " | Fruit Count: " << (int)mqttMsg.fruitCount
-              << " | FridgeWeight: " << mqttMsg.fridgeInfo.weight << "g" << std::endl;
+    LOG_INFO(std::string("Sent MsgID: ") + std::to_string(mqttMsg.messageId) + " | Fruit Count: " + std::to_string((int)mqttMsg.fruitCount)
+             + " | FridgeWeight: " + std::to_string(mqttMsg.fridgeInfo.weight) + "g");
 }
