@@ -25,6 +25,7 @@ add_subdirectory(third_part/mqtt)
 add_subdirectory(third_part/tensorrt)
 
 # 4. 然后添加业务模块
+add_subdirectory(common)
 add_subdirectory(stm32_message_recever)
 add_subdirectory(cv_model)
 add_subdirectory(mqtt_message_sender)

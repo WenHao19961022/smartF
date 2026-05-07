@@ -15,6 +15,7 @@ void InventoryManager::handleDynamicEvent(FruitType type, int32_t weightDelta, i
     if (countDelta > 0) { // 放入
         for (int i = 0; i < countDelta; ++i) {
             TrackedFruit f;
+            f.id = getNextId();
             f.uid = std::to_string((int)type) + "_" + std::to_string(timestamp);
             f.type = type;
             f.put_in_timestamp = timestamp;
@@ -77,6 +78,7 @@ void InventoryManager::handleStaticEvent(const StaticRecognitionResult& static_r
             size_t diff = staticCount - category.fruits.size();
             for (size_t i = 0; i < diff; ++i) {
                 TrackedFruit f;
+                f.id = getNextId();
                 f.type = t;
                 // 使用开门时间戳作为 UID 批次标识，保证与动态阶段一致
                 f.uid = std::to_string((int)t) + "_" + std::to_string(door_open_ts);

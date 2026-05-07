@@ -3,38 +3,76 @@
 
 #include <mutex>
 #include <atomic>
-#include "../api/stm32_message_recever_api.h" // 包含stm32_message_recever_api.h头文件以使用其中定义的结构体和函数声明
+#include <string>
+#include <vector>
+#include "../api/stm32_message_recever_api.h"
 
-const static bool INITI_FINISHED = true; // 定义一个常量，表示初始化是否完成
-const static bool INITI_UNFINISHED = false; // 定义一个常量，表示初始化是否未完成
-const static uint16_t WEIGHT_CHANGE_THRESHOLD = 100; // 定义一个常量，表示记录冰箱状态信息的重量变化阈值
-const static uint16_t TEMPERATURE_CHANGE_THRESHOLD = 1; // 定义一个常量，表示记录冰箱状态信息的温度变化阈值
-const static uint16_t HUMIDITY_CHANGE_THRESHOLD = 5; // 定义一个常量，表示记录冰箱状态信息的湿度变化阈值
+// 串口配置常量（可在配置文件中覆盖）
+const static bool INITI_FINISHED = true;
+const static bool INITI_UNFINISHED = false;
+const static uint16_t WEIGHT_CHANGE_THRESHOLD = 100;
+const static uint16_t TEMPERATURE_CHANGE_THRESHOLD = 1;
+const static uint16_t HUMIDITY_CHANGE_THRESHOLD = 5;
+
+// 默认串口配置
+const static std::string DEFAULT_SERIAL_PORT = "/dev/ttyUSB0";
+const static int DEFAULT_BAUDRATE = 115200;
+const static int SERIAL_TIMEOUT_MS = 1000;
+
+// STM32通信协议配置
+const static uint8_t FRAME_HEAD = 0xAA;
+const static uint8_t FRAME_TAIL = 0x55;
+const static uint8_t FRAME_MIN_LEN = 10;
+
+// 冰箱数据类型
+enum class FridgeDataType : uint8_t {
+    TEMPERATURE = 0x01,
+    HUMIDITY = 0x02,
+    WEIGHT = 0x03,
+    DOOR_STATUS = 0x04
+};
 
 class MessageReceverManager
 {
 public:
-    static MessageReceverManager& GetInstance(); // 获取MessageReceverManager实例的静态方法
-    void ReceverInit(); // 初始化方法，建议在程序启动时显式调用一次
-    bool IsReceverReady() const { return m_initStatus.load(); } // 检查接收器是否准备就绪，供与core通讯
-    void MainLoop(); // 接收功能主循环
-    FrigeratorHistoryInfo GetFrigeratorHistoryInfo(); // 获取冰箱历史信息的方法，供与core通讯
+    static MessageReceverManager& GetInstance();
+
+    void ReceverInit();
+    bool IsReceverReady() const { return m_initStatus.load(); }
+    void MainLoop();
+    FrigeratorHistoryInfo GetFrigeratorHistoryInfo();
+
+    // 串口配置接口
+    void SetSerialPort(const std::string& port) { m_serialPort = port; }
+    void SetBaudrate(int baudrate) { m_baudrate = baudrate; }
 
 private:
-    MessageReceverManager(); // 私有构造函数，防止外部实例化
-    ~MessageReceverManager(); // 析构函数
-    MessageReceverManager(const MessageReceverManager&) = delete; // 禁止复制构造函数，确保单例模式
-    MessageReceverManager& operator=(const MessageReceverManager&) = delete; // 禁止赋值运算符，确保单例模式
+    MessageReceverManager();
+    ~MessageReceverManager();
+    MessageReceverManager(const MessageReceverManager&) = delete;
+    MessageReceverManager& operator=(const MessageReceverManager&) = delete;
 
-    void ReceverReady() { m_initStatus.store(INITI_FINISHED); } // 设置接收器准备就绪的标志位
+    bool InitSerial();
+    bool ReadFromSerial(std::vector<uint8_t>& buffer);
+    bool ParseSerialData(const std::vector<uint8_t>& data, FrigeratorInfoWithTimestamp& result);
+    FrigeratorInfoWithTimestamp GetLatestFrigeratorInfo();
+    void UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimestamp& newInfo);
+    void GenerateSimulatedData(FrigeratorInfoWithTimestamp& info);
 
-    FrigeratorInfoWithTimestamp GetLatestFrigeratorInfo(); // 获取最新的冰箱状态信息的方法
-    void UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimestamp& newInfo); // 更新冰箱历史信息的方法
+    void ReceverReady() { m_initStatus.store(INITI_FINISHED); }
 
-    // 数据
     std::atomic<bool> m_initStatus{INITI_UNFINISHED};
     std::mutex m_dataMutex;
-    FrigeratorHistoryInfo m_historyInfo; // 冰箱历史信息,最后一个信息是最新的状态信息
+    FrigeratorHistoryInfo m_historyInfo;
+
+    // 串口相关
+    std::string m_serialPort = DEFAULT_SERIAL_PORT;
+    int m_baudrate = DEFAULT_BAUDRATE;
+    int m_serialFd = -1;  // 串口文件描述符
+
+    // 模拟数据计数器（用于测试）
+    uint32_t m_simCounter = 0;
+    bool m_useSimulation = false;  // 串口打开失败时自动切换到模拟模式
 };
 
 #endif // MESSAGE_RECEVER_MANAGER_H
