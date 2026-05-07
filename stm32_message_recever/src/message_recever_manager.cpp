@@ -17,21 +17,21 @@ MessageReceverManager& MessageReceverManager::GetInstance() {
 }
 
 MessageReceverManager::MessageReceverManager() {
-    ReceverInit();
+    Init();
 }
 
 MessageReceverManager::~MessageReceverManager() {
-    if (m_serialFd >= 0) {
-        close(m_serialFd);
-        m_serialFd = -1;
+    if (mSerialFd >= 0) {
+        close(mSerialFd);
+        mSerialFd = -1;
     }
 }
 
 bool MessageReceverManager::InitSerial() {
-    m_serialFd = open(m_serialPort.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    mSerialFd = open(mSerialPort.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
 
-    if (m_serialFd < 0) {
-        std::cerr << "[STM32] Failed to open serial port: " << m_serialPort
+    if (mSerialFd < 0) {
+        std::cerr << "[STM32] Failed to open serial port: " << mSerialPort
                   << " (" << strerror(errno) << ")" << std::endl;
         return false;
     }
@@ -39,16 +39,16 @@ bool MessageReceverManager::InitSerial() {
     struct termios tty;
     memset(&tty, 0, sizeof(tty));
 
-    if (tcgetattr(m_serialFd, &tty) != 0) {
+    if (tcgetattr(mSerialFd, &tty) != 0) {
         std::cerr << "[STM32] tcgetattr failed: " << strerror(errno) << std::endl;
-        close(m_serialFd);
-        m_serialFd = -1;
+        close(mSerialFd);
+        mSerialFd = -1;
         return false;
     }
 
     // 设置波特率
     speed_t baud;
-    switch (m_baudrate) {
+    switch (mBaudrate) {
         case 9600:   baud = B9600;   break;
         case 19200:  baud = B19200;  break;
         case 38400:  baud = B38400;  break;
@@ -80,35 +80,35 @@ bool MessageReceverManager::InitSerial() {
     tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 1;  // 0.1秒超时
 
-    if (tcsetattr(m_serialFd, TCSANOW, &tty) != 0) {
+    if (tcsetattr(mSerialFd, TCSANOW, &tty) != 0) {
         std::cerr << "[STM32] tcsetattr failed: " << strerror(errno) << std::endl;
-        close(m_serialFd);
-        m_serialFd = -1;
+        close(mSerialFd);
+        mSerialFd = -1;
         return false;
     }
 
-    tcflush(m_serialFd, TCIFLUSH);
+    tcflush(mSerialFd, TCIFLUSH);
 
-    std::cout << "[STM32] Serial port opened: " << m_serialPort
-              << " @ " << m_baudrate << " baud" << std::endl;
+    std::cout << "[STM32] Serial port opened: " << mSerialPort
+              << " @ " << mBaudrate << " baud" << std::endl;
     return true;
 }
 
-void MessageReceverManager::ReceverInit() {
-    m_initStatus.store(INITI_UNFINISHED);
+void MessageReceverManager::Init() {
+    mInitStatus.store(kInitUnfinished);
 
-    m_dataMutex.lock();
-    m_historyInfo = {};
-    m_dataMutex.unlock();
+    mDataMutex.lock();
+    mHistoryInfo = {};
+    mDataMutex.unlock();
 
     // 初始化串口
-    m_useSimulation = false;
+    mUseSimulation = false;
     if (!InitSerial()) {
         std::cerr << "[STM32] Serial init failed, switching to simulation mode" << std::endl;
-        m_useSimulation = true;
+        mUseSimulation = true;
     }
 
-    ReceverReady();
+    SetReady();
 }
 
 void MessageReceverManager::MainLoop() {
@@ -120,15 +120,15 @@ void MessageReceverManager::MainLoop() {
 }
 
 FrigeratorHistoryInfo MessageReceverManager::GetFrigeratorHistoryInfo() {
-    std::lock_guard<std::mutex> lock(m_dataMutex);
-    return m_historyInfo;
+    std::lock_guard<std::mutex> lock(mDataMutex);
+    return mHistoryInfo;
 }
 
 bool MessageReceverManager::ReadFromSerial(std::vector<uint8_t>& buffer) {
-    if (m_serialFd < 0) return false;
+    if (mSerialFd < 0) return false;
 
     uint8_t tempBuf[256];
-    ssize_t bytesRead = read(m_serialFd, tempBuf, sizeof(tempBuf));
+    ssize_t bytesRead = read(mSerialFd, tempBuf, sizeof(tempBuf));
 
     if (bytesRead > 0) {
         buffer.assign(tempBuf, tempBuf + bytesRead);
@@ -161,20 +161,20 @@ bool MessageReceverManager::ParseSerialData(
     size_t i = 0;
     while (i < data.size()) {
         // 查找帧头
-        if (data[i] != FRAME_HEAD) {
+        if (data[i] != kFrameHead) {
             i++;
             continue;
         }
 
         // 检查是否有足够的数据
-        if (i + FRAME_MIN_LEN > data.size()) {
+        if (i + kFrameMinLen > data.size()) {
             break;
         }
 
         uint8_t len = data[i + 1];
 
         // 验证帧尾
-        if (data[i + 2 + len + 1] != FRAME_TAIL) {
+        if (data[i + 2 + len + 1] != kFrameTail) {
             i++;
             continue;
         }
@@ -200,8 +200,8 @@ bool MessageReceverManager::ParseSerialData(
             result.info.weight = static_cast<uint16_t>(
                 data[base + 4] | (data[base + 5] << 8));
             result.info.doorStatus = (data[base + 6] == 1)
-                ? DoorStatus::DOOR_OPEN
-                : DoorStatus::DOOR_CLOSED;
+                ? DoorStatus::DoorOpen
+                : DoorStatus::DoorClosed;
 
             result.timestamp = static_cast<uint32_t>(std::time(nullptr));
             return true;
@@ -214,7 +214,7 @@ bool MessageReceverManager::ParseSerialData(
 }
 
 void MessageReceverManager::GenerateSimulatedData(FrigeratorInfoWithTimestamp& info) {
-    m_simCounter++;
+    mSimCounter++;
 
     info.timestamp = static_cast<uint32_t>(std::time(nullptr));
 
@@ -228,15 +228,15 @@ void MessageReceverManager::GenerateSimulatedData(FrigeratorInfoWithTimestamp& i
     info.info.weight = static_cast<uint16_t>(2000 + (rand() % 500));
 
     // 模拟门状态：每50次循环切换一次
-    info.info.doorStatus = ((m_simCounter / 50) % 2 == 1)
-        ? DoorStatus::DOOR_OPEN
-        : DoorStatus::DOOR_CLOSED;
+    info.info.doorStatus = ((mSimCounter / 50) % 2 == 1)
+        ? DoorStatus::DoorOpen
+        : DoorStatus::DoorClosed;
 }
 
 FrigeratorInfoWithTimestamp MessageReceverManager::GetLatestFrigeratorInfo() {
     FrigeratorInfoWithTimestamp latestInfo = {};
 
-    if (m_useSimulation) {
+    if (mUseSimulation) {
         // 模拟模式
         GenerateSimulatedData(latestInfo);
     } else {
@@ -259,48 +259,48 @@ FrigeratorInfoWithTimestamp MessageReceverManager::GetLatestFrigeratorInfo() {
 }
 
 void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimestamp& newInfo) {
-    std::lock_guard<std::mutex> lock(m_dataMutex);
+    std::lock_guard<std::mutex> lock(mDataMutex);
 
     // 门状态变化时记录
-    if (m_historyInfo.doorStatus[FRIGERATOR_HISTORY_INFO_SIZE - 1] != newInfo.info.doorStatus) {
-        for (size_t i = 0; i < FRIGERATOR_HISTORY_INFO_SIZE - 1; i++) {
-            m_historyInfo.doorStatusTimestamp[i] = m_historyInfo.doorStatusTimestamp[i + 1];
-            m_historyInfo.doorStatus[i] = m_historyInfo.doorStatus[i + 1];
+    if (mHistoryInfo.doorStatus[kFridgeHistoryInfoSize - 1] != newInfo.info.doorStatus) {
+        for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
+            mHistoryInfo.doorStatusTimestamp[i] = mHistoryInfo.doorStatusTimestamp[i + 1];
+            mHistoryInfo.doorStatus[i] = mHistoryInfo.doorStatus[i + 1];
         }
-        m_historyInfo.doorStatusTimestamp[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.timestamp;
-        m_historyInfo.doorStatus[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.info.doorStatus;
+        mHistoryInfo.doorStatusTimestamp[kFridgeHistoryInfoSize - 1] = newInfo.timestamp;
+        mHistoryInfo.doorStatus[kFridgeHistoryInfoSize - 1] = newInfo.info.doorStatus;
     }
 
     // 湿度变化超过阈值时记录
-    if (std::abs(static_cast<int>(m_historyInfo.humidity[FRIGERATOR_HISTORY_INFO_SIZE - 1])
-                 - static_cast<int>(newInfo.info.humidity)) > HUMIDITY_CHANGE_THRESHOLD) {
-        for (size_t i = 0; i < FRIGERATOR_HISTORY_INFO_SIZE - 1; i++) {
-            m_historyInfo.humidityTimestamp[i] = m_historyInfo.humidityTimestamp[i + 1];
-            m_historyInfo.humidity[i] = m_historyInfo.humidity[i + 1];
+    if (std::abs(static_cast<int>(mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1])
+                 - static_cast<int>(newInfo.info.humidity)) > kHumidityChangeThreshold) {
+        for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
+            mHistoryInfo.humidityTimestamp[i] = mHistoryInfo.humidityTimestamp[i + 1];
+            mHistoryInfo.humidity[i] = mHistoryInfo.humidity[i + 1];
         }
-        m_historyInfo.humidityTimestamp[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.timestamp;
-        m_historyInfo.humidity[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.info.humidity;
+        mHistoryInfo.humidityTimestamp[kFridgeHistoryInfoSize - 1] = newInfo.timestamp;
+        mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1] = newInfo.info.humidity;
     }
 
     // 温度变化超过阈值时记录
-    if (std::abs(static_cast<int>(m_historyInfo.temperature[FRIGERATOR_HISTORY_INFO_SIZE - 1])
-                 - static_cast<int>(newInfo.info.temperature)) > TEMPERATURE_CHANGE_THRESHOLD) {
-        for (size_t i = 0; i < FRIGERATOR_HISTORY_INFO_SIZE - 1; i++) {
-            m_historyInfo.temperatureTimestamp[i] = m_historyInfo.temperatureTimestamp[i + 1];
-            m_historyInfo.temperature[i] = m_historyInfo.temperature[i + 1];
+    if (std::abs(static_cast<int>(mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1])
+                 - static_cast<int>(newInfo.info.temperature)) > kTemperatureChangeThreshold) {
+        for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
+            mHistoryInfo.temperatureTimestamp[i] = mHistoryInfo.temperatureTimestamp[i + 1];
+            mHistoryInfo.temperature[i] = mHistoryInfo.temperature[i + 1];
         }
-        m_historyInfo.temperatureTimestamp[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.timestamp;
-        m_historyInfo.temperature[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.info.temperature;
+        mHistoryInfo.temperatureTimestamp[kFridgeHistoryInfoSize - 1] = newInfo.timestamp;
+        mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1] = newInfo.info.temperature;
     }
 
     // 重量变化超过阈值时记录
-    if (std::abs(static_cast<int>(m_historyInfo.weight[FRIGERATOR_HISTORY_INFO_SIZE - 1])
-                 - static_cast<int>(newInfo.info.weight)) > WEIGHT_CHANGE_THRESHOLD) {
-        for (size_t i = 0; i < FRIGERATOR_HISTORY_INFO_SIZE - 1; i++) {
-            m_historyInfo.weightTimestamp[i] = m_historyInfo.weightTimestamp[i + 1];
-            m_historyInfo.weight[i] = m_historyInfo.weight[i + 1];
+    if (std::abs(static_cast<int>(mHistoryInfo.weight[kFridgeHistoryInfoSize - 1])
+                 - static_cast<int>(newInfo.info.weight)) > kWeightChangeThreshold) {
+        for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
+            mHistoryInfo.weightTimestamp[i] = mHistoryInfo.weightTimestamp[i + 1];
+            mHistoryInfo.weight[i] = mHistoryInfo.weight[i + 1];
         }
-        m_historyInfo.weightTimestamp[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.timestamp;
-        m_historyInfo.weight[FRIGERATOR_HISTORY_INFO_SIZE - 1] = newInfo.info.weight;
+        mHistoryInfo.weightTimestamp[kFridgeHistoryInfoSize - 1] = newInfo.timestamp;
+        mHistoryInfo.weight[kFridgeHistoryInfoSize - 1] = newInfo.info.weight;
     }
 }

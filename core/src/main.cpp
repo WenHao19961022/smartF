@@ -4,15 +4,13 @@
 #include "../include/external_apis.h"
 #include "../include/core_manager.h"
 
-
 // 全局互斥锁
-std::mutex cout_mutex;
-
+std::mutex coutMutex;
 
 // 模块函数声明
 void LaunchMqttMessageSender() {
     {
-        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::lock_guard<std::mutex> lock(coutMutex);
         std::cout << "MqttMessageSender running in thread " << std::this_thread::get_id() << std::endl;
     }
     MqttMessageSenderMainLoop();
@@ -20,7 +18,7 @@ void LaunchMqttMessageSender() {
 
 void LaunchStm32MessageReceiver() {
     {
-        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::lock_guard<std::mutex> lock(coutMutex);
         std::cout << "Stm32MessageReceiver running in thread " << std::this_thread::get_id() << std::endl;
     }
     Stm32MessageReceverMainLoop();
@@ -28,12 +26,12 @@ void LaunchStm32MessageReceiver() {
 
 void LaunchCvModel() {
     {
-        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::lock_guard<std::mutex> lock(coutMutex);
         std::cout << "CvModel running in thread " << std::this_thread::get_id() << std::endl;
     }
 
     if (!CvModelInit()) {
-        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::lock_guard<std::mutex> lock(coutMutex);
         std::cerr << "CvModel initialization failed. Exiting CvModel thread." << std::endl;
         return;
     }
@@ -41,15 +39,14 @@ void LaunchCvModel() {
     CvModelMainLoop();
 }
 
-void Core() {
+void CoreThread() {
     {
-        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::lock_guard<std::mutex> lock(coutMutex);
         std::cout << "Core running in thread " << std::this_thread::get_id() << std::endl;
     }
-    // 主线程具体逻辑
     CoreManager manager;
-    manager.init();
-    manager.run();
+    manager.Init();
+    manager.Run();
 }
 
 int main() {
@@ -57,7 +54,7 @@ int main() {
     std::thread t1(LaunchMqttMessageSender);
     std::thread t2(LaunchStm32MessageReceiver);
     std::thread t3(LaunchCvModel);
-    std::thread t4(Core);
+    std::thread t4(CoreThread);
 
     // 等待所有线程结束
     t1.join();

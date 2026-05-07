@@ -1,11 +1,11 @@
-#include "config_manager.h"
+#include "../include/config_manager.h"
 #include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <cstdlib>
 #include <cctype>
 
-ConfigManager& ConfigManager::getInstance() {
+ConfigManager& ConfigManager::GetInstance() {
     static ConfigManager instance;
     return instance;
 }
@@ -13,35 +13,35 @@ ConfigManager& ConfigManager::getInstance() {
 ConfigManager::ConfigManager() {
     // 设置默认值
     // MQTT配置
-    config_["mqtt.broker_addr"] = "tcp://localhost:1883";
-    config_["mqtt.client_id"] = "SmartFridge_MQTT_Client";
-    config_["mqtt.topic"] = "smartfridge/data";
-    config_["mqtt.qos"] = "1";
-    config_["mqtt.keepalive"] = "60";
+    mConfig["mqtt.broker_addr"] = "tcp://localhost:1883";
+    mConfig["mqtt.client_id"] = "SmartFridge_MQTT_Client";
+    mConfig["mqtt.topic"] = "smartfridge/data";
+    mConfig["mqtt.qos"] = "1";
+    mConfig["mqtt.keepalive"] = "60";
 
     // 串口配置
-    config_["serial.port"] = "/dev/ttyUSB0";
-    config_["serial.baudrate"] = "115200";
-    config_["serial.timeout_ms"] = "1000";
+    mConfig["serial.port"] = "/dev/ttyUSB0";
+    mConfig["serial.baudrate"] = "115200";
+    mConfig["serial.timeout_ms"] = "1000";
 
     // CV模型配置
-    config_["cv.model_path"] = "cv_model/yolov8/yolo12n.engine";
-    config_["cv.conf_threshold"] = "0.5";
-    config_["cv.nms_threshold"] = "0.4";
-    config_["cv.use_simulation"] = "false";
+    mConfig["cv.model_path"] = "cv_model/yolov8/yolo12n.engine";
+    mConfig["cv.conf_threshold"] = "0.5";
+    mConfig["cv.nms_threshold"] = "0.4";
+    mConfig["cv.use_simulation"] = "false";
 
     // 业务配置
-    config_["device.id"] = "10001";
-    config_["device.name"] = "SmartFridge-001";
-    config_["inventory.static_interval_sec"] = "7200";  // 2小时
-    config_["inventory.weight_threshold"] = "10";
-    config_["inventory.max_fruit_count"] = "10";
+    mConfig["device.id"] = "10001";
+    mConfig["device.name"] = "SmartFridge-001";
+    mConfig["inventory.static_interval_sec"] = "7200";  // 2小时
+    mConfig["inventory.weight_threshold"] = "10";
+    mConfig["inventory.max_fruit_count"] = "10";
 }
 
 ConfigManager::~ConfigManager() {
 }
 
-void ConfigManager::trimString(std::string& str) {
+void ConfigManager::TrimString(std::string& str) {
     // 去除首尾空白
     str.erase(str.begin(),
               std::find_if(str.begin(), str.end(),
@@ -51,9 +51,9 @@ void ConfigManager::trimString(std::string& str) {
               str.end());
 }
 
-void ConfigManager::parseLine(const std::string& line) {
+void ConfigManager::ParseLine(const std::string& line) {
     std::string trimmed = line;
-    trimString(trimmed);
+    TrimString(trimmed);
 
     // 跳过空行和注释
     if (trimmed.empty() || trimmed[0] == '#' || trimmed[0] == ';') {
@@ -69,8 +69,8 @@ void ConfigManager::parseLine(const std::string& line) {
     std::string key = trimmed.substr(0, pos);
     std::string value = trimmed.substr(pos + 1);
 
-    trimString(key);
-    trimString(value);
+    TrimString(key);
+    TrimString(value);
 
     // 去除引号
     if ((value.front() == '"' && value.back() == '"') ||
@@ -78,11 +78,11 @@ void ConfigManager::parseLine(const std::string& line) {
         value = value.substr(1, value.length() - 2);
     }
 
-    config_[key] = value;
+    mConfig[key] = value;
 }
 
-bool ConfigManager::loadConfig(const std::string& configPath) {
-    std::lock_guard<std::mutex> lock(mutex_);
+bool ConfigManager::LoadConfig(const std::string& configPath) {
+    std::lock_guard<std::mutex> lock(mMutex);
 
     std::ifstream file(configPath);
     if (!file.is_open()) {
@@ -93,16 +93,16 @@ bool ConfigManager::loadConfig(const std::string& configPath) {
 
     std::string line;
     while (std::getline(file, line)) {
-        parseLine(line);
+        ParseLine(line);
     }
 
-    std::cout << "[Config] Loaded " << config_.size() << " settings from: "
+    std::cout << "[Config] Loaded " << mConfig.size() << " settings from: "
               << configPath << std::endl;
     return true;
 }
 
-bool ConfigManager::saveConfig(const std::string& configPath) {
-    std::lock_guard<std::mutex> lock(mutex_);
+bool ConfigManager::SaveConfig(const std::string& configPath) {
+    std::lock_guard<std::mutex> lock(mMutex);
 
     std::ofstream file(configPath);
     if (!file.is_open()) {
@@ -112,26 +112,26 @@ bool ConfigManager::saveConfig(const std::string& configPath) {
 
     file << "# Smart Fridge Configuration File\n\n";
 
-    for (const auto& [key, value] : config_) {
+    for (const auto& [key, value] : mConfig) {
         file << key << " = " << value << "\n";
     }
 
-    std::cout << "[Config] Saved " << config_.size() << " settings to: "
+    std::cout << "[Config] Saved " << mConfig.size() << " settings to: "
               << configPath << std::endl;
     return true;
 }
 
-std::string ConfigManager::getString(const std::string& key,
+std::string ConfigManager::GetString(const std::string& key,
                                      const std::string& defaultVal) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = config_.find(key);
-    return (it != config_.end()) ? it->second : defaultVal;
+    std::lock_guard<std::mutex> lock(mMutex);
+    auto it = mConfig.find(key);
+    return (it != mConfig.end()) ? it->second : defaultVal;
 }
 
-int ConfigManager::getInt(const std::string& key, int defaultVal) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = config_.find(key);
-    if (it != config_.end()) {
+int ConfigManager::GetInt(const std::string& key, int defaultVal) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    auto it = mConfig.find(key);
+    if (it != mConfig.end()) {
         try {
             return std::stoi(it->second);
         } catch (...) {
@@ -141,10 +141,10 @@ int ConfigManager::getInt(const std::string& key, int defaultVal) {
     return defaultVal;
 }
 
-float ConfigManager::getFloat(const std::string& key, float defaultVal) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = config_.find(key);
-    if (it != config_.end()) {
+float ConfigManager::GetFloat(const std::string& key, float defaultVal) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    auto it = mConfig.find(key);
+    if (it != mConfig.end()) {
         try {
             return std::stof(it->second);
         } catch (...) {
@@ -154,10 +154,10 @@ float ConfigManager::getFloat(const std::string& key, float defaultVal) {
     return defaultVal;
 }
 
-bool ConfigManager::getBool(const std::string& key, bool defaultVal) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = config_.find(key);
-    if (it != config_.end()) {
+bool ConfigManager::GetBool(const std::string& key, bool defaultVal) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    auto it = mConfig.find(key);
+    if (it != mConfig.end()) {
         std::string val = it->second;
         std::transform(val.begin(), val.end(), val.begin(), ::tolower);
         return (val == "true" || val == "1" || val == "yes" || val == "on");
@@ -165,22 +165,22 @@ bool ConfigManager::getBool(const std::string& key, bool defaultVal) {
     return defaultVal;
 }
 
-void ConfigManager::setString(const std::string& key, const std::string& val) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    config_[key] = val;
+void ConfigManager::SetString(const std::string& key, const std::string& val) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mConfig[key] = val;
 }
 
-void ConfigManager::setInt(const std::string& key, int val) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    config_[key] = std::to_string(val);
+void ConfigManager::SetInt(const std::string& key, int val) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mConfig[key] = std::to_string(val);
 }
 
-void ConfigManager::setFloat(const std::string& key, float val) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    config_[key] = std::to_string(val);
+void ConfigManager::SetFloat(const std::string& key, float val) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mConfig[key] = std::to_string(val);
 }
 
-void ConfigManager::setBool(const std::string& key, bool val) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    config_[key] = val ? "true" : "false";
+void ConfigManager::SetBool(const std::string& key, bool val) {
+    std::lock_guard<std::mutex> lock(mMutex);
+    mConfig[key] = val ? "true" : "false";
 }

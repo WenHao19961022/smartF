@@ -7,48 +7,46 @@
 #include <vector>
 #include "../api/stm32_message_recever_api.h"
 
-// 串口配置常量（可在配置文件中覆盖）
-const static bool INITI_FINISHED = true;
-const static bool INITI_UNFINISHED = false;
-const static uint16_t WEIGHT_CHANGE_THRESHOLD = 100;
-const static uint16_t TEMPERATURE_CHANGE_THRESHOLD = 1;
-const static uint16_t HUMIDITY_CHANGE_THRESHOLD = 5;
+// ==================== 常量 ====================
+const bool kInitFinished = true;
+const bool kInitUnfinished = false;
+const uint16_t kWeightChangeThreshold = 100;
+const uint16_t kTemperatureChangeThreshold = 1;
+const uint16_t kHumidityChangeThreshold = 5;
 
-// 默认串口配置
-const static std::string DEFAULT_SERIAL_PORT = "/dev/ttyUSB0";
-const static int DEFAULT_BAUDRATE = 115200;
-const static int SERIAL_TIMEOUT_MS = 1000;
+const std::string kDefaultSerialPort = "/dev/ttyUSB0";
+const int kDefaultBaudrate = 115200;
+const int kSerialTimeoutMs = 1000;
 
-// STM32通信协议配置
-const static uint8_t FRAME_HEAD = 0xAA;
-const static uint8_t FRAME_TAIL = 0x55;
-const static uint8_t FRAME_MIN_LEN = 10;
+const uint8_t kFrameHead = 0xAA;
+const uint8_t kFrameTail = 0x55;
+const uint8_t kFrameMinLen = 10;
 
-// 冰箱数据类型
+// ==================== 枚举 ====================
 enum class FridgeDataType : uint8_t {
-    TEMPERATURE = 0x01,
-    HUMIDITY = 0x02,
-    WEIGHT = 0x03,
-    DOOR_STATUS = 0x04
+    Temperature = 0x01,
+    Humidity    = 0x02,
+    Weight      = 0x03,
+    DoorStatus  = 0x04
 };
 
-class MessageReceverManager
-{
+// ==================== 消息接收管理类 ====================
+class MessageReceverManager {
 public:
     static MessageReceverManager& GetInstance();
 
-    void ReceverInit();
-    bool IsReceverReady() const { return m_initStatus.load(); }
+    void Init();
+    bool IsReady() const { return mInitStatus.load(); }
     void MainLoop();
     FrigeratorHistoryInfo GetFrigeratorHistoryInfo();
 
-    // 串口配置接口
-    void SetSerialPort(const std::string& port) { m_serialPort = port; }
-    void SetBaudrate(int baudrate) { m_baudrate = baudrate; }
+    void SetSerialPort(const std::string& port) { mSerialPort = port; }
+    void SetBaudrate(int baudrate) { mBaudrate = baudrate; }
 
 private:
     MessageReceverManager();
     ~MessageReceverManager();
+
     MessageReceverManager(const MessageReceverManager&) = delete;
     MessageReceverManager& operator=(const MessageReceverManager&) = delete;
 
@@ -58,21 +56,18 @@ private:
     FrigeratorInfoWithTimestamp GetLatestFrigeratorInfo();
     void UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimestamp& newInfo);
     void GenerateSimulatedData(FrigeratorInfoWithTimestamp& info);
+    void SetReady() { mInitStatus.store(kInitFinished); }
 
-    void ReceverReady() { m_initStatus.store(INITI_FINISHED); }
+    std::atomic<bool> mInitStatus{kInitUnfinished};
+    std::mutex mDataMutex;
+    FrigeratorHistoryInfo mHistoryInfo;
 
-    std::atomic<bool> m_initStatus{INITI_UNFINISHED};
-    std::mutex m_dataMutex;
-    FrigeratorHistoryInfo m_historyInfo;
+    std::string mSerialPort = kDefaultSerialPort;
+    int mBaudrate = kDefaultBaudrate;
+    int mSerialFd = -1;
 
-    // 串口相关
-    std::string m_serialPort = DEFAULT_SERIAL_PORT;
-    int m_baudrate = DEFAULT_BAUDRATE;
-    int m_serialFd = -1;  // 串口文件描述符
-
-    // 模拟数据计数器（用于测试）
-    uint32_t m_simCounter = 0;
-    bool m_useSimulation = false;  // 串口打开失败时自动切换到模拟模式
+    uint32_t mSimCounter = 0;
+    bool mUseSimulation = false;
 };
 
 #endif // MESSAGE_RECEVER_MANAGER_H

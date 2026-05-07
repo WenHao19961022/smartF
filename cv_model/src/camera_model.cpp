@@ -9,61 +9,54 @@ CameraModule& CameraModule::GetInstance() {
 }
 
 CameraModule::CameraModule() {
-    m_running.store(true);
-    m_isOpened.store(false);
-
-    // 启动采集线程
-    m_captureThread = std::thread(&CameraModule::captureThreadFunc, this);
+    mRunning.store(true);
+    mIsOpened.store(false);
+    mCaptureThread = std::thread(&CameraModule::CaptureThreadFunc, this);
 }
 
 CameraModule::~CameraModule() {
-    m_running.store(false);
-
-    if (m_captureThread.joinable()) {
-        m_captureThread.join();
+    mRunning.store(false);
+    if (mCaptureThread.joinable()) {
+        mCaptureThread.join();
     }
-
-    closeCamera();
+    CloseCamera();
 }
 
-bool CameraModule::openCamera() {
-    closeCamera();
+bool CameraModule::OpenCamera() {
+    CloseCamera();
 
-    m_capture.open(m_cameraIndex);
+    mCapture.open(mCameraIndex);
 
-    if (!m_capture.isOpened()) {
-        std::cerr << "[Camera] Failed to open camera index " << m_cameraIndex << std::endl;
-        m_isOpened.store(false);
+    if (!mCapture.isOpened()) {
+        std::cerr << "[Camera] Failed to open camera index " << mCameraIndex << std::endl;
+        mIsOpened.store(false);
         return false;
     }
 
-    // 设置分辨率
-    m_capture.set(cv::CAP_PROP_FRAME_WIDTH, m_width);
-    m_capture.set(cv::CAP_PROP_FRAME_HEIGHT, m_height);
+    mCapture.set(cv::CAP_PROP_FRAME_WIDTH, mWidth);
+    mCapture.set(cv::CAP_PROP_FRAME_HEIGHT, mHeight);
+    mCapture.set(cv::CAP_PROP_FPS, 30);
 
-    // 设置帧率
-    m_capture.set(cv::CAP_PROP_FPS, 30);
-
-    m_isOpened.store(true);
+    mIsOpened.store(true);
     std::cout << "[Camera] Camera opened successfully ("
-              << m_width << "x" << m_height << ")" << std::endl;
+              << mWidth << "x" << mHeight << ")" << std::endl;
     return true;
 }
 
-void CameraModule::closeCamera() {
-    if (m_capture.isOpened()) {
-        m_capture.release();
+void CameraModule::CloseCamera() {
+    if (mCapture.isOpened()) {
+        mCapture.release();
     }
-    m_isOpened.store(false);
+    mIsOpened.store(false);
 }
 
-void CameraModule::captureThreadFunc() {
+void CameraModule::CaptureThreadFunc() {
     int reconnectDelaySec = 2;
     int maxReconnectDelaySec = 30;
 
-    while (m_running.load()) {
-        if (!m_isOpened.load()) {
-            if (openCamera()) {
+    while (mRunning.load()) {
+        if (!mIsOpened.load()) {
+            if (OpenCamera()) {
                 reconnectDelaySec = 2;
             } else {
                 std::this_thread::sleep_for(std::chrono::seconds(reconnectDelaySec));
@@ -73,16 +66,15 @@ void CameraModule::captureThreadFunc() {
         }
 
         cv::Mat tempFrame;
-        if (m_capture.read(tempFrame)) {
+        if (mCapture.read(tempFrame)) {
             if (!tempFrame.empty()) {
-                std::lock_guard<std::mutex> lock(m_frameMutex);
-                tempFrame.copyTo(m_latestFrame);
+                std::lock_guard<std::mutex> lock(mFrameMutex);
+                tempFrame.copyTo(mLatestFrame);
             }
         } else {
-            // 读取失败，摄像头可能断开
             std::cerr << "[Camera] Frame capture failed, scheduling reconnect..." << std::endl;
-            m_isOpened.store(false);
-            closeCamera();
+            mIsOpened.store(false);
+            CloseCamera();
 
             std::this_thread::sleep_for(std::chrono::seconds(reconnectDelaySec));
             reconnectDelaySec = std::min(reconnectDelaySec * 2, maxReconnectDelaySec);
@@ -93,11 +85,9 @@ void CameraModule::captureThreadFunc() {
 }
 
 cv::Mat CameraModule::GetLatestFrame() {
-    std::lock_guard<std::mutex> lock(m_frameMutex);
-
-    if (m_latestFrame.empty()) {
+    std::lock_guard<std::mutex> lock(mFrameMutex);
+    if (mLatestFrame.empty()) {
         return cv::Mat();
     }
-
-    return m_latestFrame.clone();
+    return mLatestFrame.clone();
 }

@@ -8,40 +8,40 @@
 #include <vector>
 #include <memory>
 
-class TRTLogger : public nvinfer1::ILogger {
+// ==================== TensorRT日志类 ====================
+class TrtLogger : public nvinfer1::ILogger {
     void log(Severity severity, const char* msg) noexcept override {
         if (severity <= Severity::kWARNING) printf("[TRT] %s\n", msg);
     }
 };
 
+// ==================== 推理引擎类 ====================
 class InferenceEngine {
 public:
     InferenceEngine(const std::string& enginePath);
     ~InferenceEngine();
 
-    // 执行异步推理
     bool Infer(const cv::Mat& frame, std::vector<float>& outputData);
 
-    // 获取模型输入输出尺寸，供外部后处理参考
-    std::vector<int> GetInputDims() const { return m_inputDims; }
-    std::vector<int> GetOutputDims() const { return m_outputDims; }
+    std::vector<int> GetInputDims() const { return mInputDims; }
+    std::vector<int> GetOutputDims() const { return mOutputDims; }
 
 private:
     bool LoadEngine(const std::string& path);
     void Preprocess(const cv::Mat& frame, float* gpuInput);
 
-    TRTLogger m_logger;
-    nvinfer1::IRuntime* m_runtime = nullptr;
-    nvinfer1::ICudaEngine* m_engine = nullptr;
-    nvinfer1::IExecutionContext* m_context = nullptr;
-    cudaStream_t m_stream = nullptr;
+    TrtLogger mLogger;
+    nvinfer1::IRuntime* mRuntime = nullptr;
+    nvinfer1::ICudaEngine* mEngine = nullptr;
+    nvinfer1::IExecutionContext* mContext = nullptr;
+    cudaStream_t mStream = nullptr;
 
-    void* m_gpuBuffers[2] = {nullptr, nullptr};
-    size_t m_inputSizeBytes = 0;
-    size_t m_outputSizeBytes = 0;
+    void* mGpuBuffers[2] = {nullptr, nullptr};
+    size_t mInputSizeBytes = 0;
+    size_t mOutputSizeBytes = 0;
 
-    std::vector<int> m_inputDims;
-    std::vector<int> m_outputDims;
+    std::vector<int> mInputDims;
+    std::vector<int> mOutputDims;
 };
 
-#endif
+#endif // INFERENCE_ENGINE_H
