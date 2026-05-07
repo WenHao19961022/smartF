@@ -1,5 +1,4 @@
-#include "inventory_manager.h"
-
+#include "../include/inventory_manager.h"
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
