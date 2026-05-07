@@ -1,4 +1,5 @@
 #include "../include/cv_model_manager.h"
+#include "../include/camera_model.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -86,7 +87,7 @@ void CvModelManager::StaticRecognitionInternal()
 
     // 1. 获取图像 (此处应接入你的相机或图像流模块)
     cv::Mat frame; 
-    // frame = CameraModule::GetInstance().GetLatestFrame();
+    frame = CameraModule::GetInstance().GetLatestFrame();
 
     if (!frame.empty()) {
         std::vector<float> rawOutput;
@@ -113,6 +114,7 @@ void CvModelManager::DynamicRecognitionInternal()
 
     // 动态识别逻辑：通常涉及跨帧跟踪或更频繁的检测
     cv::Mat frame;
+    frame = CameraModule::GetInstance().GetLatestFrame();
     if (!frame.empty() && m_inferenceEngine) {
         std::vector<float> rawOutput;
         m_inferenceEngine->Infer(frame, rawOutput);

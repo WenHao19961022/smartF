@@ -1,4 +1,5 @@
 #include "../include/inference_engine.h"
+#include "../include/camera_model.h"
 #include <fstream>
 #include <iostream>
 

@@ -27,7 +27,7 @@ public:
     static CvModelManager& GetInstance();
 
     // 模型初始化（建议在程序启动时显式调用一次）
-    void CvModelInit();
+    bool CvModelInit();
 
     // CvModelManager主循环函数，负责处理识别任务和状态更新
     void MainLoop();

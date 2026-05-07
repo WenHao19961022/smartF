@@ -31,6 +31,13 @@ void LaunchCvModel() {
         std::lock_guard<std::mutex> lock(cout_mutex);
         std::cout << "CvModel running in thread " << std::this_thread::get_id() << std::endl;
     }
+
+    if (!CvModelInit()) {
+        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::cerr << "CvModel initialization failed. Exiting CvModel thread." << std::endl;
+        return;
+    }
+
     CvModelMainLoop();
 }
 
