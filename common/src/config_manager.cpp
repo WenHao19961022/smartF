@@ -23,7 +23,7 @@ ConfigManager::ConfigManager() {
     mConfig["mqtt.keepalive"] = "60";
 
     // 串口配置
-    mConfig["serial.port"] = "/dev/ttyUSB0";
+    mConfig["serial.port"] = "/dev/ttyTHS0";
     mConfig["serial.baudrate"] = "115200";
     mConfig["serial.timeout_ms"] = "1000";
     mConfig["serial.weight_threshold"] = "100";

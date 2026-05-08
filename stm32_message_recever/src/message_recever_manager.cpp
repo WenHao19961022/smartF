@@ -103,7 +103,7 @@ void MessageReceverManager::Init() {
     mDataMutex.unlock();
 
     // 从配置管理器读取串口参数和变化阈值
-    mSerialPort = ConfigManager::GetInstance().GetString("serial.port", "/dev/ttyUSB0");
+    mSerialPort = ConfigManager::GetInstance().GetString("serial.port", "/dev/ttyTHS0");
     mBaudrate = ConfigManager::GetInstance().GetInt("serial.baudrate", 115200);
     mWeightChangeThreshold = static_cast<uint16_t>(
         ConfigManager::GetInstance().GetInt("serial.weight_threshold", 100));

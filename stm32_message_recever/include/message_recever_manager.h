@@ -43,7 +43,7 @@ private:
     std::mutex mDataMutex;
     FrigeratorHistoryInfo mHistoryInfo;
 
-    std::string mSerialPort = "/dev/ttyUSB0";
+    std::string mSerialPort = "/dev/ttyTHS0";
     int mBaudrate = 115200;
     int mSerialFd = -1;
 
