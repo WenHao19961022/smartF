@@ -25,6 +25,10 @@ public:
     void MainLoop();
     FrigeratorHistoryInfo GetFrigeratorHistoryInfo();
 
+    // Mock mode: 模拟STM32信号（用于联调测试，无真实硬件时启用）
+    void StartMockMode(int doorOpenDurationSec = 5, int doorClosedDurationSec = 10);
+    void StopMockMode();
+
 private:
     MessageReceverManager();
     ~MessageReceverManager();
@@ -39,6 +43,8 @@ private:
     void UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimestamp& newInfo);
     void SetReady() { mInitStatus.store(kInitFinished); }
 
+    void MockThreadFunc(int doorOpenDurationSec, int doorClosedDurationSec);
+
     std::atomic<bool> mInitStatus{kInitUnfinished};
     std::mutex mDataMutex;
     FrigeratorHistoryInfo mHistoryInfo;
@@ -51,6 +57,10 @@ private:
     uint16_t mWeightChangeThreshold = 100;
     uint16_t mTemperatureChangeThreshold = 1;
     uint16_t mHumidityChangeThreshold = 5;
+
+    // Mock mode
+    std::atomic<bool> mMockRunning{false};
+    std::thread mMockThread;
 };
 
 #endif // MESSAGE_RECEVER_MANAGER_H

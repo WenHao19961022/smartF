@@ -342,3 +342,103 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
         mHistoryInfo.weight[kFridgeHistoryInfoSize - 1] = newInfo.info.weight;
     }
 }
+
+// ==================== Mock Mode ====================
+void MessageReceverManager::StartMockMode(int doorOpenDurationSec, int doorClosedDurationSec) {
+    LOG_PRINT("[Stm32-Mock]", "=== Starting Mock Mode ===");
+    LOG_PRINT("[Stm32-Mock]", "Door open duration: " << doorOpenDurationSec << "s");
+    LOG_PRINT("[Stm32-Mock]", "Door closed duration: " << doorClosedDurationSec << "s");
+
+    // 初始化默认数据
+    {
+        std::lock_guard<std::mutex> lock(mDataMutex);
+        for (int i = 0; i < kFridgeHistoryInfoSize; ++i) {
+            mHistoryInfo.temperature[i] = 50;  // 5.0°C
+            mHistoryInfo.humidity[i] = 600;    // 60.0%
+            mHistoryInfo.weight[i] = 5000;     // 5000g
+            mHistoryInfo.doorStatus[i] = DoorStatus::DoorClosed;
+            mHistoryInfo.temperatureTimestamp[i] = static_cast<uint32_t>(std::time(nullptr));
+            mHistoryInfo.humidityTimestamp[i] = static_cast<uint32_t>(std::time(nullptr));
+            mHistoryInfo.weightTimestamp[i] = static_cast<uint32_t>(std::time(nullptr));
+            mHistoryInfo.doorStatusTimestamp[i] = static_cast<uint32_t>(std::time(nullptr));
+        }
+    }
+
+    SetReady();
+    mMockRunning.store(true);
+    mMockThread = std::thread(&MessageReceverManager::MockThreadFunc, this, doorOpenDurationSec, doorClosedDurationSec);
+
+    LOG_PRINT("[Stm32-Mock]", "Mock mode started successfully");
+}
+
+void MessageReceverManager::StopMockMode() {
+    LOG_PRINT("[Stm32-Mock]", "=== Stopping Mock Mode ===");
+    mMockRunning.store(false);
+    if (mMockThread.joinable()) {
+        mMockThread.join();
+    }
+    LOG_PRINT("[Stm32-Mock]", "Mock mode stopped");
+}
+
+void MessageReceverManager::MockThreadFunc(int doorOpenDurationSec, int doorClosedDurationSec) {
+    LOG_PRINT("[Stm32-Mock]", "Mock thread started");
+
+    // 初始状态：门关闭
+    DoorStatus currentDoorStatus = DoorStatus::DoorClosed;
+    uint16_t currentWeight = 5000;  // 初始重量 5000g
+
+    int cycleCount = 0;
+    while (mMockRunning.load()) {
+        cycleCount++;
+
+        // 生成模拟数据
+        FrigeratorInfoWithTimestamp mockInfo;
+        mockInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
+
+        // 模拟温度波动（4.5°C ~ 5.5°C）
+        mockInfo.info.temperature = 45 + (rand() % 11);
+
+        // 模拟湿度波动（55% ~ 65%）
+        mockInfo.info.humidity = 550 + (rand() % 101);
+
+        // 门状态和重量
+        mockInfo.info.doorStatus = currentDoorStatus;
+        mockInfo.info.weight = currentWeight;
+
+        // 更新历史数据
+        UpdateFrigeratorHistoryInfo(mockInfo);
+
+        LOG_PRINT("[Stm32-Mock]", "Cycle #" << cycleCount
+                  << " | door=" << (currentDoorStatus == DoorStatus::DoorOpen ? "OPEN" : "CLOSED")
+                  << " | weight=" << currentWeight << "g"
+                  << " | temp=" << (mockInfo.info.temperature / 10.0) << "C"
+                  << " | humidity=" << (mockInfo.info.humidity / 10.0) << "%");
+
+        // 等待当前状态持续时间
+        int durationSec = (currentDoorStatus == DoorStatus::DoorOpen)
+                          ? doorOpenDurationSec
+                          : doorClosedDurationSec;
+
+        for (int sec = 0; sec < durationSec && mMockRunning.load(); ++sec) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+
+        // 切换门状态
+        if (!mMockRunning.load()) break;
+
+        if (currentDoorStatus == DoorStatus::DoorClosed) {
+            // 关门 -> 开门：模拟放入/取出物品，重量变化
+            currentDoorStatus = DoorStatus::DoorOpen;
+            // 随机增加或减少重量（模拟放入/取出水果）
+            int weightChange = (rand() % 2 == 0) ? (rand() % 500 + 100) : -(rand() % 500 + 100);
+            currentWeight = static_cast<uint16_t>(std::max(100, static_cast<int>(currentWeight) + weightChange));
+            LOG_PRINT("[Stm32-Mock]", "Door OPENING | weight change: +" << weightChange << "g -> " << currentWeight << "g");
+        } else {
+            // 开门 -> 关门
+            currentDoorStatus = DoorStatus::DoorClosed;
+            LOG_PRINT("[Stm32-Mock]", "Door CLOSING");
+        }
+    }
+
+    LOG_PRINT("[Stm32-Mock]", "Mock thread ended");
+}
