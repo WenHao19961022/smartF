@@ -34,14 +34,19 @@ bool CvModelManager::CvModelInit() {
     mDataMutex.unlock();
 
     std::string enginePath = ConfigManager::GetInstance().GetString("cv.model_path", "cv_model/yolov8/yolo12n.engine");
+    std::string onnxPath = ConfigManager::GetInstance().GetString("cv.model_onnx_path", "cv_model/yolov8/yolo12n.onnx");
 
     try {
         mInferenceEngine = std::make_unique<InferenceEngine>(enginePath);
+        if (mInferenceEngine->IsCpuMode()) {
+            LOG_PRINT("[CvModel]", "Running in CPU mode (ONNX: " << onnxPath << ")");
+        } else {
+            LOG_PRINT("[CvModel]", "TensorRT Engine Initialized Successfully.");
+        }
         SetReady();
-        LOG_PRINT("[CvModel]", "TensorRT Engine Initialized Successfully.");
         return true;
     } catch (const std::exception& e) {
-        LOG_PRINT("[CvModel]", "TensorRT init failed: " << e.what());
+        LOG_PRINT("[CvModel]", "CV Model init failed: " << e.what());
         return false;
     }
 }
