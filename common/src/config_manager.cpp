@@ -12,9 +12,11 @@ ConfigManager& ConfigManager::GetInstance() {
 
 ConfigManager::ConfigManager() {
     // 设置默认值
-    // MQTT配置
-    mConfig["mqtt.broker_addr"] = "tcp://localhost:1883";
+    // MQTT配置（云端服务器）
+    mConfig["mqtt.broker_addr"] = "tcp://101.34.239.30:1883";
     mConfig["mqtt.client_id"] = "SmartFridge_MQTT_Client";
+    mConfig["mqtt.username"] = "admin";
+    mConfig["mqtt.password"] = "admin123";
     mConfig["mqtt.topic"] = "smartfridge/data";
     mConfig["mqtt.qos"] = "1";
     mConfig["mqtt.keepalive"] = "60";

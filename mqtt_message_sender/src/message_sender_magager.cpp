@@ -46,12 +46,19 @@ bool MessageSenderManager::Connect() {
     }
 
     try {
-        mqtt::async_client* client = new mqtt::async_client(kMqttBrokerAddr, kMqttClientId);
+        std::string brokerAddr = ConfigManager::GetInstance().GetString("mqtt.broker_addr", "tcp://101.34.239.30:1883");
+        std::string clientId = ConfigManager::GetInstance().GetString("mqtt.client_id", "SmartFridge_MQTT_Client");
+        std::string username = ConfigManager::GetInstance().GetString("mqtt.username", "admin");
+        std::string password = ConfigManager::GetInstance().GetString("mqtt.password", "admin123");
+        mqtt::async_client* client = new mqtt::async_client(brokerAddr, clientId);
 
+        int keepalive = ConfigManager::GetInstance().GetInt("mqtt.keepalive", 60);
         mqtt::connect_options connOpts;
-        connOpts.set_keep_alive_interval(std::chrono::seconds(kMqttKeepalive));
+        connOpts.set_keep_alive_interval(std::chrono::seconds(keepalive));
         connOpts.set_clean_session(true);
         connOpts.set_automatic_reconnect(true);
+        connOpts.set_user_name(username);
+        connOpts.set_password(password);
 
         // 尝试连接
         mqtt::token_ptr connectToken = client->connect(connOpts);
@@ -60,7 +67,7 @@ bool MessageSenderManager::Connect() {
         if (client->is_connected()) {
             mMqttClient = static_cast<void*>(client);
             mConnected.store(true);
-            std::cout << "[MQTT] Successfully connected to broker: " << kMqttBrokerAddr << std::endl;
+            std::cout << "[MQTT] Successfully connected to broker: " << brokerAddr << std::endl;
             return true;
         }
     } catch (const mqtt::exception& exc) {
@@ -124,14 +131,18 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
 
         mqtt::async_client* client = static_cast<mqtt::async_client*>(mMqttClient);
 
+        // 从配置管理器获取topic和qos
+        std::string topic = ConfigManager::GetInstance().GetString("mqtt.topic", "smartfridge/data");
+        int qos = ConfigManager::GetInstance().GetInt("mqtt.qos", 1);
+
         // 发布消息
-        mqtt::message_ptr pubmsg = mqtt::make_message(kMqttTopic, jsonPayload);
-        pubmsg->set_qos(kMqttQos);
+        mqtt::message_ptr pubmsg = mqtt::make_message(topic, jsonPayload);
+        pubmsg->set_qos(qos);
 
         mqtt::token_ptr pubToken = client->publish(pubmsg);
         pubToken->wait_for(std::chrono::seconds(3));
 
-        std::cout << "[MQTT] Message published successfully to topic: " << kMqttTopic << std::endl;
+        std::cout << "[MQTT] Message published successfully to topic: " << topic << std::endl;
         std::cout << "[MQTT] Payload size: " << jsonPayload.size() << " bytes" << std::endl;
         return true;
 
