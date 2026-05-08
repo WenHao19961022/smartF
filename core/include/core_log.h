@@ -4,9 +4,40 @@
 #include <string>
 #include <sstream>
 
+// RAII 风格的作用域追踪，构造时发送 START，析构时若未明确结束则发 WARN
+class LogScope {
+public:
+	LogScope(const char* func, const char* file, int line)
+		: m_func(func ? func : ""), m_file(file ? file : ""), m_line(line) {
+		CoreLog(LogLevel::START, "", m_file.c_str(), m_line, m_func.c_str());
+	}
+
+	~LogScope() {
+		// 如果当前线程的记录函数仍为本函数，说明没有 LOG_OK/LOG_ERR 被调用
+		std::string curr = CoreGetCurrentFunction();
+		if (curr == m_func) {
+			CoreLog(LogLevel::WARN, "Exited without OK", m_file.c_str(), m_line, m_func.c_str());
+		}
+	}
+
+	// 禁止拷贝
+	LogScope(const LogScope&) = delete;
+	LogScope& operator=(const LogScope&) = delete;
+
+private:
+	std::string m_func;
+	std::string m_file;
+	int m_line;
+};
+
+// 便捷宏：在函数最顶部插入一行即可
+#define LOG_TRACE_SCOPE() LogScope _log_scope_obj(__FUNCTION__, __FILE__, __LINE__)
+
 enum class LogLevel { START, OK, WARN, ERROR, DATA, INFO };
 
 void CoreLog(LogLevel level, const std::string &msg, const char* file, int line, const char* func);
+// 读取当前正在运行（最近由 LOG_START 标记）的函数名
+std::string CoreGetCurrentFunction();
 
 // 简洁易用的宏（可在编译时通过定义 DISABLE_CORE_LOG 关闭）
 #ifndef DISABLE_CORE_LOG

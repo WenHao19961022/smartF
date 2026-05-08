@@ -8,6 +8,7 @@
 #include <ctime>
 
 static std::mutex g_log_mutex;
+thread_local static std::string g_current_function;
 
 static const char* LevelPrefix(LogLevel l) {
     switch (l) {
@@ -42,6 +43,17 @@ void CoreLog(LogLevel level, const std::string &msg, const char* file, int line,
     out << oss.str() << " " << LevelPrefix(level) << " " << func << "() - " << msg
         << " (" << file << ":" << line << ")";
 
+    {
+        std::lock_guard<std::mutex> lock(g_log_mutex);
+        // 更新当前函数追踪：START 设置，OK/ERROR 清除
+        if (level == LogLevel::START) g_current_function = func ? func : std::string();
+        else if (level == LogLevel::OK || level == LogLevel::ERROR || level == LogLevel::WARN) g_current_function.clear();
+
+        std::cout << out.str() << std::endl;
+    }
+}
+
+std::string CoreGetCurrentFunction() {
     std::lock_guard<std::mutex> lock(g_log_mutex);
-    std::cout << out.str() << std::endl;
+    return g_current_function;
 }

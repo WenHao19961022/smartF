@@ -21,10 +21,11 @@ namespace {
 static std::atomic<uint16_t> gMsgCounter(0);
 
 void CoreManager::Init() {
-    LOG_START("初始化开始");
+    LOG_TRACE_SCOPE();
     FrigeratorHistoryInfo initialInfo = GetFrigeratorInfo();
     mLastDoorState = (initialInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
     mLastStaticTime = std::chrono::steady_clock::now();
+    mLastDebugTriggerTime = std::chrono::steady_clock::now();
     LOG_WARN("等待 CV 模型就绪...");
     while (!IsCvModelReady()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -33,22 +34,57 @@ void CoreManager::Init() {
 }
 
 void CoreManager::Run() {
-    LOG_START("进入主循环");
+    LOG_TRACE_SCOPE();
+    auto lastHeartbeat = std::chrono::steady_clock::now();
+
     while (mRunning) {
         // 实时获取底层硬件状态（以最新的一次为准）
         FrigeratorHistoryInfo currInfo = GetFrigeratorInfo();
         bool currentDoorState = (currInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
 
-        if (currentDoorState != mLastDoorState) {               // 门状态变化，触发对应事件
-            LOG_INFO(std::string("门状态突变触发: ") + (currentDoorState ? "关->开" : "开->关"));
-            if (currentDoorState == true) {                       // 开门事件
-                // 记录开门瞬间的重量作为基准
+        // 1. 优先级最高：真实门开信号打断自动化调试
+        if (currentDoorState) {
+            if (mDebugState != DebugState::IDLE) {
+                LOG_WARN("检测到真实开门，立即强行终止自动化调试流程！");
+                ResetDebugCycle();
+            }
+            if (!mLastDoorState) {
+                // 刚刚检测到开门
                 mBaseWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
                 HandleDoorOpen();
-            } else {
-                HandleDoorClose();                                  // 关门事件
             }
-            mLastDoorState = currentDoorState;
+        } else {
+            // 门关闭状态下，优先执行正常关门后的处理
+            if (mLastDoorState) {
+                HandleDoorClose();
+            }
+
+            // 2. 门关闭且系统空闲时，执行自动化调试逻辑
+            ExecuteCvDebugCycle();
+        }
+
+        // 心跳监控：每3秒打印一次 core 运行进度（包含当前函数与门状态等）
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - lastHeartbeat).count() >= 3) {
+            lastHeartbeat = now;
+            std::string currFunc = CoreGetCurrentFunction();
+            FrigeratorHistoryInfo info = GetFrigeratorInfo();
+            // 拼接门状态数组展示
+            std::ostringstream ds;
+            ds << "[";
+            for (int i = 0; i < kFridgeHistoryInfoSize; ++i) {
+                ds << static_cast<int>(info.doorStatus[i]);
+                if (i + 1 < kFridgeHistoryInfoSize) ds << ",";
+            }
+            ds << "]";
+
+            std::ostringstream hb;
+            hb << "Heartbeat | CurrFunc:" << (currFunc.empty() ? "-" : currFunc)
+               << " | DoorStatus:" << ds.str()
+               << " | BaseWeight:" << mBaseWeight << "g"
+               << " | IsStaticWaiting:" << (mIsStaticWaiting ? "Y" : "N");
+
+            LOG_INFO(hb.str());
         }
 
         if (mIsStaticWaiting && IsStaticRecognitionIdle() && !currentDoorState) {
@@ -64,7 +100,7 @@ void CoreManager::Run() {
 }
 
 void CoreManager::HandleDoorOpen() {
-    LOG_START("处理开门逻辑");
+    LOG_TRACE_SCOPE();
     mIsStaticWaiting = false;
     // 记录开门瞬间时间戳（秒）作为本次批次基准
     mDoorOpenTimestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
@@ -76,7 +112,7 @@ void CoreManager::HandleDoorOpen() {
 }
 
 void CoreManager::HandleDoorClose() {
-    LOG_START("处理关门逻辑 (启动动态对账)");
+    LOG_TRACE_SCOPE();
     StopDynamicRecognition();
 
     while (!IsDynamicRecognitionIdle()) {
@@ -171,7 +207,7 @@ void CoreManager::CheckTimers() {
 }
 
 void CoreManager::ProcessStaticResultOnly() {
-    LOG_START("收到静态照片，开始终极对账");
+    LOG_TRACE_SCOPE();
     mIsStaticWaiting = false;
     StaticRecognitionResult stat = GetStaticRecognitionResult();
 
@@ -212,4 +248,56 @@ void CoreManager::ProcessStaticResultOnly() {
     SendMqttMessage(mqttMsg);
     LOG_INFO(std::string("Sent MsgID: ") + std::to_string(mqttMsg.messageId) + " | Fruit Count: " + std::to_string((int)mqttMsg.fruitCount)
              + " | FridgeWeight: " + std::to_string(mqttMsg.fridgeInfo.weight) + "g");
+}
+
+// ---------------- CV 自动化调试流程 ----------------
+void CoreManager::ExecuteCvDebugCycle() {
+    auto now = std::chrono::steady_clock::now();
+
+    switch (mDebugState) {
+        case DebugState::IDLE:
+            // 检查是否到了2分钟周期
+            if (now - mLastDebugTriggerTime >= kDebugInterval) {
+                LOG_INFO(
+                    std::string(">>> 启动自动化调试周期 [2min/次] <<<")
+                );
+                mDebugState = DebugState::DYNAMIC_START;
+            }
+            break;
+
+        case DebugState::DYNAMIC_START:
+            LOG_START("调试周期: 正在开启动态调用...");
+            // 启动动态识别
+            StartDynamicRecognition();
+            mDynamicStartTime = now;
+            mDebugState = DebugState::WAITING_DYNAMIC;
+            break;
+
+        case DebugState::WAITING_DYNAMIC:
+            // 非阻塞等待 20 秒
+            if (now - mDynamicStartTime >= kDynamicDuration) {
+                LOG_OK("调试周期: 动态等待结束 (20s)，准备切换静态。");
+                // 关闭动态识别
+                StopDynamicRecognition();
+                mDebugState = DebugState::STATIC_START;
+            }
+            break;
+
+        case DebugState::STATIC_START:
+            LOG_START("调试周期: 触发静态照片识别...");
+            // 非阻塞触发静态识别：设置等待标志，由主循环在空闲时处理回传
+            StartStaticRecognition();
+            mIsStaticWaiting = true;
+            LOG_OK("调试周期: 静态拍照指令已下发，等待回传");
+            mLastDebugTriggerTime = now; // 更新周期起点
+            mDebugState = DebugState::IDLE;
+            break;
+    }
+}
+
+void CoreManager::ResetDebugCycle() {
+    // 强制重置状态，确保下次能正常进入
+    StopDynamicRecognition();
+    mDebugState = DebugState::IDLE;
+    mLastDebugTriggerTime = std::chrono::steady_clock::now(); 
 }
