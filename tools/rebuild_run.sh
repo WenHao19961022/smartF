@@ -39,9 +39,9 @@ fi
 # 6. 运行程序
 echo -e "${GREEN}>>> 编译成功，启动程序...${NC}"
 echo "----------------------------------------"
+# 加上 sudo 来启动最终的可执行文件
 if [ -f "./bin/smart_fridge_app" ]; then
-    ./bin/smart_fridge_app
+    sudo ./bin/smart_fridge_app
 else
-    # 兼容性处理：如果你的可执行文件不在 bin 目录下，而是在 build 根目录
-    ../bin/smart_fridge_app || ./smart_fridge_app
+    sudo ../bin/smart_fridge_app || sudo ./smart_fridge_app
 fi
