@@ -1,6 +1,8 @@
 #include "../include/inference_engine.h"
+#include "../../common/include/logger.h"
 #include <fstream>
 #include <iostream>
+#include <chrono>
 
 InferenceEngine::InferenceEngine(const std::string& enginePath) {
     // 检查 CUDA 是否可用
@@ -8,14 +10,14 @@ InferenceEngine::InferenceEngine(const std::string& enginePath) {
     cudaError_t err = cudaGetDeviceCount(&cudaDeviceCount);
 
     if (err == cudaSuccess && cudaDeviceCount > 0) {
-        printf("[TRT] CUDA available, attempting GPU inference (device count: %d)\n", cudaDeviceCount);
+        LOG_PRINT("[TRT]", "CUDA available, attempting GPU inference (device count: " << cudaDeviceCount << ")");
         if (LoadEngine(enginePath)) {
-            printf("[TRT] TensorRT engine loaded successfully on GPU.\n");
+            LOG_PRINT("[TRT]", "TensorRT engine loaded successfully on GPU.");
             return;  // GPU 模式加载成功
         }
-        printf("[TRT] TensorRT GPU load failed, falling back to CPU mode.\n");
+        LOG_PRINT("[TRT]", "TensorRT GPU load failed, falling back to CPU mode.");
     } else {
-        printf("[TRT] CUDA error %d, falling back to CPU mode.\n", err);
+        LOG_PRINT("[TRT]", "CUDA error " << err << ", falling back to CPU mode.");
     }
 
     // CPU 模式：尝试加载 ONNX 模型（从 enginePath 推断 onnx 路径）
@@ -26,10 +28,10 @@ InferenceEngine::InferenceEngine(const std::string& enginePath) {
         onnxPath = onnxPath.substr(0, pos) + ".onnx";
     }
 
-    printf("[TRT] Loading CPU ONNX model: %s\n", onnxPath.c_str());
+    LOG_PRINT("[TRT]", "Loading CPU ONNX model: " << onnxPath);
     if (LoadCpuOnnx(onnxPath)) {
         mUseCpu = true;
-        printf("[TRT] CPU ONNX model loaded successfully.\n");
+        LOG_PRINT("[TRT]", "CPU ONNX model loaded successfully.");
         return;
     }
 
@@ -103,16 +105,26 @@ bool InferenceEngine::LoadCpuOnnx(const std::string& path) {
         mCpuNet.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
         return true;
     } catch (const std::exception& e) {
-        printf("[TRT] LoadCpuOnnx failed: %s\n", e.what());
+        LOG_PRINT("[TRT]", "LoadCpuOnnx failed: " << e.what());
         return false;
     }
 }
 
 bool InferenceEngine::Infer(const cv::Mat& frame, std::vector<float>& outputData) {
-    if (frame.empty()) return false;
+    if (frame.empty()) {
+        LOG_PRINT("[TRT]", "Infer() called with empty frame");
+        return false;
+    }
+
+    auto inferStart = std::chrono::steady_clock::now();
 
     if (mUseCpu) {
-        return InferCpu(frame, outputData);
+        bool ret = InferCpu(frame, outputData);
+        auto inferEnd = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(inferEnd - inferStart).count();
+        LOG_PRINT("[TRT]", "[CPU] Infer done in " << ms << "ms | Frame: " << frame.cols << "x" << frame.rows
+                  << " | Output size: " << outputData.size());
+        return ret;
     }
 
     // GPU 模式
@@ -120,12 +132,23 @@ bool InferenceEngine::Infer(const cv::Mat& frame, std::vector<float>& outputData
         cv::Size(mInputDims[2], mInputDims[3]),
         cv::Scalar(0, 0, 0), true, false);
 
+    LOG_PRINT("[TRT]", "[GPU] Infer start | Frame: " << frame.cols << "x" << frame.rows
+              << " -> Blob: " << mInputDims[2] << "x" << mInputDims[3]
+              << " | InputBytes: " << mInputSizeBytes << " OutputBytes: " << mOutputSizeBytes);
+
     cudaMemcpyAsync(mGpuBuffers[0], blob.data, mInputSizeBytes, cudaMemcpyHostToDevice, mStream);
     mContext->enqueueV3(mStream);
 
     outputData.resize(mOutputSizeBytes / sizeof(float));
     cudaMemcpyAsync(outputData.data(), mGpuBuffers[1], mOutputSizeBytes, cudaMemcpyDeviceToHost, mStream);
     cudaStreamSynchronize(mStream);
+
+    auto inferEnd = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(inferEnd - inferStart).count();
+    LOG_PRINT("[TRT]", "[GPU] Infer done in " << ms << "ms | Output values: " << outputData.size()
+              << " OutputDims: [" << (mOutputDims.size() > 0 ? mOutputDims[0] : 0)
+              << "," << (mOutputDims.size() > 1 ? mOutputDims[1] : 0)
+              << "," << (mOutputDims.size() > 2 ? mOutputDims[2] : 0) << "]");
 
     return true;
 }
@@ -143,7 +166,7 @@ bool InferenceEngine::InferCpu(const cv::Mat& frame, std::vector<float>& outputD
         memcpy(outputData.data(), prob.data, prob.total() * sizeof(float));
         return true;
     } catch (const std::exception& e) {
-        printf("[TRT] InferCpu failed: %s\n", e.what());
+        LOG_PRINT("[TRT]", "InferCpu failed: " << e.what());
         return false;
     }
 }

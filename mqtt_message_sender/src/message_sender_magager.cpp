@@ -22,6 +22,7 @@ MessageSenderManager::~MessageSenderManager() {
 }
 
 void MessageSenderManager::Init() {
+    LOG_PRINT("[Mqtt]", "=== MessageSenderManager Init START ===");
     mInitStatus.store(kInitUnfinished);
     mSenderIdleStatus.store(kSenderIdle);
     mMessageSendSwitch.store(kMessageSendSwitchOff);
@@ -31,12 +32,34 @@ void MessageSenderManager::Init() {
     mMessage = {};
     mDataMutex.unlock();
 
+    // 从配置管理器读取MQTT参数
+    std::string brokerAddr = ConfigManager::GetInstance().GetString("mqtt.broker_addr", "tcp://101.34.239.30:1883");
+    std::string clientId = ConfigManager::GetInstance().GetString("mqtt.client_id", "SmartFridge_MQTT_Client");
+    std::string username = ConfigManager::GetInstance().GetString("mqtt.username", "admin");
+    std::string password = ConfigManager::GetInstance().GetString("mqtt.password", "admin123");
+    int keepalive = ConfigManager::GetInstance().GetInt("mqtt.keepalive", 60);
+    std::string topic = ConfigManager::GetInstance().GetString("mqtt.topic", "smartfridge/data");
+    int qos = ConfigManager::GetInstance().GetInt("mqtt.qos", 1);
+
+    LOG_PRINT("[Mqtt]", "Config loaded:");
+    LOG_PRINT("[Mqtt]", "  - broker_addr: " << brokerAddr);
+    LOG_PRINT("[Mqtt]", "  - client_id: " << clientId);
+    LOG_PRINT("[Mqtt]", "  - username: " << username);
+    LOG_PRINT("[Mqtt]", "  - password: [PROTECTED]");
+    LOG_PRINT("[Mqtt]", "  - keepalive: " << keepalive << "s");
+    LOG_PRINT("[Mqtt]", "  - topic: " << topic);
+    LOG_PRINT("[Mqtt]", "  - qos: " << qos);
+
     // 尝试连接MQTT服务器
+    LOG_PRINT("[Mqtt]", "Attempting to connect to MQTT broker...");
     if (Connect()) {
+        LOG_PRINT("[Mqtt]", "Initial connection successful");
         SetReady();
     } else {
+        LOG_PRINT("[Mqtt]", "Initial connection failed, will retry on first send");
         SetReady();  // 即使连接失败也标记为ready，后续发送时重连
     }
+    LOG_PRINT("[Mqtt]", "=== MessageSenderManager Init END ===");
 }
 
 bool MessageSenderManager::Connect() {
@@ -107,6 +130,14 @@ bool MessageSenderManager::Disconnect() {
 void MessageSenderManager::CopyMessage(const MqttMessageStruct& message) {
     std::lock_guard<std::mutex> lock(mDataMutex);
     mMessage = message;
+    LOG_PRINT("[Mqtt]", "CopyMessage: deviceId=" << message.deviceId
+              << " | msgId=" << message.messageId
+              << " | time=" << message.time
+              << " | fruitCount=" << (int)message.fruitCount
+              << " | temp=" << (message.fridgeInfo.temperature / 10.0) << "C"
+              << " | humidity=" << (message.fridgeInfo.humidity / 10.0) << "%"
+              << " | weight=" << message.fridgeInfo.weight << "g"
+              << " | door=" << (int)message.fridgeInfo.doorStatus);
 }
 
 bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
@@ -146,6 +177,13 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
         LOG_PRINT("[Mqtt]", "Message published successfully to topic: " << topic);
         LOG_PRINT("[Mqtt]", "Payload size: " << jsonPayload.size() << " bytes");
         LOG_PRINT("[Mqtt]", "Payload JSON:\n" << jsonPayload);
+        LOG_PRINT("[Mqtt]", "SendMessage: All " << (int)message.fruitCount << " fruit items published successfully");
+        for (uint8_t i = 0; i < message.fruitCount; ++i) {
+            LOG_PRINT("[Mqtt]", "  Fruit[" << (int)i << "]: id=" << message.fruits[i].id
+                      << " type=" << (int)message.fruits[i].type
+                      << " freshness=" << (int)message.fruits[i].freshness
+                      << " weight=" << message.fruits[i].weight << "g");
+        }
         return true;
 
     } catch (const mqtt::exception& exc) {
@@ -159,24 +197,31 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
 }
 
 void MessageSenderManager::MainLoop() {
+    LOG_PRINT("[Mqtt]", "=== MessageSenderManager MainLoop START ===");
+    int loopCount = 0;
     while (true) {
         if (IsMessageSendSwitchOn() && IsIdle()) {
+            LOG_PRINT("[Mqtt]", "MainLoop: SendSwitch=ON, SenderIdle=YES -> preparing to send");
             SetSenderStatus(kSenderBusy);
 
             mDataMutex.lock();
             MqttMessageStruct messageToSend = mMessage;
+            LOG_PRINT("[Mqtt]", "MainLoop: Retrieved message | fruitCount=" << (int)messageToSend.fruitCount
+                      << " | msgId=" << messageToSend.messageId);
             mDataMutex.unlock();
 
             uint8_t messageSendCount = 0;
             uint8_t maxMessageSendCount = 3;
 
             while (true) {
+                LOG_PRINT("[Mqtt]", "MainLoop: Send attempt " << (messageSendCount + 1) << "/" << maxMessageSendCount);
                 if (SendMessage(messageToSend)) {
+                    LOG_PRINT("[Mqtt]", "MainLoop: Send SUCCESS after " << (messageSendCount + 1) << " attempt(s)");
                     break;
                 }
                 messageSendCount++;
                 if (messageSendCount >= maxMessageSendCount) {
-                    LOG_PRINT("[Mqtt]", "Failed to send message after " << maxMessageSendCount << " attempts");
+                    LOG_PRINT("[Mqtt]", "MainLoop: Send FAILED after " << maxMessageSendCount << " attempts");
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -185,8 +230,16 @@ void MessageSenderManager::MainLoop() {
             SetMessageSendSwitch(kMessageSendSwitchOff);
             SetSenderStatus(kSenderIdle);
         }
+
+        loopCount++;
+        if (loopCount % 100 == 0) {
+            LOG_PRINT("[Mqtt]", "MainLoop: heartbeat | connected=" << mConnected.load()
+                      << " | idle=" << IsIdle() << " | switch=" << IsMessageSendSwitchOn());
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    LOG_PRINT("[Mqtt]", "=== MessageSenderManager MainLoop END ===");
 }
 
 // ========== JSON序列化实现 ==========

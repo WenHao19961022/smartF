@@ -52,6 +52,7 @@ bool CvModelManager::CvModelInit() {
 }
 
 void CvModelManager::MainLoop() {
+    LOG_PRINT("[CvModel]", "MainLoop started");
     while (true) {
         if (!IsCvModelReady()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -59,10 +60,12 @@ void CvModelManager::MainLoop() {
         }
 
         if (IsStaticRecognitionSwitchOn() && IsStaticRecognitionIdle()) {
+            LOG_PRINT("[CvModel]", "MainLoop: StaticRecognition triggered (switch=ON, status=IDLE)");
             StaticRecognitionInternal();
         }
 
         if (IsDynamicRecognitionSwitchOn() && IsDynamicRecognitionIdle()) {
+            LOG_PRINT("[CvModel]", "MainLoop: DynamicRecognition triggered (switch=ON, status=IDLE)");
             DynamicRecognitionInternal();
         }
 
@@ -147,6 +150,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
 }
 
 void CvModelManager::StaticRecognitionInternal() {
+    LOG_PRINT("[CvModel]", "=== StaticRecognitionInternal START ===");
     SetStaticRecognitionStatus(kRecognitionBusy);
 
     std::map<std::tuple<FruitType, uint8_t, uint8_t>, int> fruitCounts;
@@ -155,14 +159,23 @@ void CvModelManager::StaticRecognitionInternal() {
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
+    LOG_PRINT("[CvModel]", "Static recognition target: " << kStaticDetectionCount << " detections");
+    LOG_PRINT("[CvModel]", "Timestamp: " << result.timestamp);
+
+    int successfulDetections = 0;
+    auto startTime = std::chrono::steady_clock::now();
+
     for (int detectionIndex = 0; detectionIndex < kStaticDetectionCount; ++detectionIndex) {
         if (!IsStaticRecognitionSwitchOn()) {
+            LOG_PRINT("[CvModel]", "Static recognition cancelled at detection " << detectionIndex << " (switch turned OFF)");
             break;
         }
 
         cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
 
         if (!frame.empty() && mInferenceEngine) {
+            LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << "/" << kStaticDetectionCount
+                      << " | Frame: " << frame.cols << "x" << frame.rows << " channels=" << frame.channels());
             std::vector<float> rawOutput;
             if (mInferenceEngine->Infer(frame, rawOutput)) {
                 auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
@@ -172,29 +185,47 @@ void CvModelManager::StaticRecognitionInternal() {
                     fruitCounts[key]++;
                 }
 
-                LOG_PRINT("[CvModel]", "Static: Detection " << (detectionIndex + 1) << " - Detected " << detections.size() << " fruits");
+                successfulDetections++;
+                LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Detected " << detections.size() << " fruits");
                 // 打印每个检测的详细信息
                 for (const auto& det : detections) {
-                    LOG_PRINT("[CvModel]", "  - Type: " << (int)det.fruitType);
+                    LOG_PRINT("[CvModel]", "  - Type: " << (int)det.fruitType
+                              << " | Pos: (" << (int)det.locationX << "," << (int)det.locationY << ")"
+                              << " | Freshness: " << (int)det.freshness);
                 }
+            } else {
+                LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Inference failed");
             }
         } else if (!frame.empty()) {
-            LOG_PRINT("[CvModel]", "CameraModule inference engine is not initialized");
+            LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Inference engine not initialized");
         } else {
+            LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Empty frame from camera, aborting static recognition");
             break;
         }
     }
 
+    auto endTime = std::chrono::steady_clock::now();
+    auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+    LOG_PRINT("[CvModel]", "Static recognition completed " << successfulDetections << "/" << kStaticDetectionCount
+              << " detections in " << durationMs << "ms");
+
     // Collect fruits that appeared in all detections
     std::vector<FruitInfo> finalDetections;
+    int confirmedFruits = 0;
     for (const auto& pair : fruitCounts) {
+        LOG_PRINT("[CvModel]", "Fruit candidate: Type=" << (int)std::get<0>(pair.first)
+                  << " Pos=(" << (int)std::get<1>(pair.first) << "," << (int)std::get<2>(pair.first) << ")"
+                  << " | Count=" << pair.second << "/" << kStaticDetectionCount);
         if (pair.second == kStaticDetectionCount) {
             FruitInfo info;
             std::tie(info.fruitType, info.locationX, info.locationY) = pair.first;
             info.freshness = FreshnessLevel::Fresh; // Default, or could be set based on logic
             finalDetections.push_back(info);
+            confirmedFruits++;
         }
     }
+
+    LOG_PRINT("[CvModel]", "Final confirmed fruits: " << confirmedFruits << " (must appear in ALL " << kStaticDetectionCount << " detections)");
 
     result.fruitCount = std::min(static_cast<uint8_t>(finalDetections.size()), kMaxStaticFruitCount);
     for (uint8_t i = 0; i < result.fruitCount; ++i) {
@@ -206,17 +237,24 @@ void CvModelManager::StaticRecognitionInternal() {
         mStaticRecognitionResult = result;
     }
 
+    LOG_PRINT("[CvModel]", "Static result stored: fruitCount=" << (int)result.fruitCount
+              << " | timestamp=" << result.timestamp);
+    LOG_PRINT("[CvModel]", "=== StaticRecognitionInternal END ===");
+
     SetStaticRecognitionSwitch(kRecognitionSwitchOff);
     SetStaticRecognitionStatus(kRecognitionIdle);
 }
 
 void CvModelManager::DynamicRecognitionInternal() {
+    LOG_PRINT("[CvModel]", "=== DynamicRecognitionInternal START ===");
     SetDynamicRecognitionStatus(kRecognitionBusy);
 
+    auto startTime = std::chrono::steady_clock::now();
     cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
     DynamicRecognitionResult result = {};
 
     if (!frame.empty() && mInferenceEngine) {
+        LOG_PRINT("[CvModel]", "Dynamic: Frame " << frame.cols << "x" << frame.rows);
         std::vector<float> rawOutput;
         if (mInferenceEngine->Infer(frame, rawOutput)) {
             auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
@@ -231,14 +269,32 @@ void CvModelManager::DynamicRecognitionInternal() {
                 result.fruitInfoWithTimestamp[i].fruitInfo = detections[i];
             }
 
-            LOG_PRINT("[CvModel]", "Dynamic: Tracked " << (int)result.fruitCount << " fruits");
+            LOG_PRINT("[CvModel]", "Dynamic: Detected " << (int)result.fruitCount << " fruits | timestamp=" << timestamp);
+            for (uint8_t i = 0; i < result.fruitCount; ++i) {
+                LOG_PRINT("[CvModel]", "  Dynamic[" << (int)i << "]: Type=" << (int)result.fruitInfoWithTimestamp[i].fruitInfo.fruitType
+                          << " | Pos=(" << (int)result.fruitInfoWithTimestamp[i].fruitInfo.locationX
+                          << "," << (int)result.fruitInfoWithTimestamp[i].fruitInfo.locationY << ")"
+                          << " | Freshness=" << (int)result.fruitInfoWithTimestamp[i].fruitInfo.freshness);
+            }
+        } else {
+            LOG_PRINT("[CvModel]", "Dynamic: Inference failed");
         }
+    } else if (frame.empty()) {
+        LOG_PRINT("[CvModel]", "Dynamic: Empty frame (camera may not be ready)");
+    } else {
+        LOG_PRINT("[CvModel]", "Dynamic: Inference engine not initialized");
     }
 
     {
         std::lock_guard<std::mutex> lock(mDataMutex);
         mDynamicRecognitionResult = result;
     }
+
+    auto endTime = std::chrono::steady_clock::now();
+    auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+    LOG_PRINT("[CvModel]", "Dynamic result stored: fruitCount=" << (int)result.fruitCount
+              << " | duration=" << durationMs << "ms");
+    LOG_PRINT("[CvModel]", "=== DynamicRecognitionInternal END ===");
 
     SetDynamicRecognitionSwitch(kRecognitionSwitchOff);
     SetDynamicRecognitionStatus(kRecognitionIdle);

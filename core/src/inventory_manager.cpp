@@ -7,7 +7,13 @@
 #include "../include/core_log.h"
 
 void InventoryManager::HandleDynamicEvent(FruitType type, int32_t weightDelta, int countDelta, uint32_t timestamp, int32_t realTotalWeight) {
-    auto& category = mStock[type];
+    // 查找或创建品类
+    auto it = mStock.find(type);
+    if (it == mStock.end()) {
+        mStock[type] = CategoryStock();
+        it = mStock.find(type);
+    }
+    auto& category = it->second;
 
     // 更新重量
     category.totalWeight += weightDelta;
@@ -29,16 +35,43 @@ void InventoryManager::HandleDynamicEvent(FruitType type, int32_t weightDelta, i
         int toRemove = std::min(removeCount, actualAvailable);
         // 从头部删除（FIFO），防御式编程：确保 toRemove>0
         if (toRemove > 0) {
+            // 使用 erase+advance 优化：只移动需要保留的元素
             category.fruits.erase(category.fruits.begin(), category.fruits.begin() + toRemove);
         }
     }
 
-    // 重量补偿校验
+    // 重量补偿校验 - 按品类数量比例分配补偿，而不是只加到当前品类
     int32_t bookTotal = GetBookTotalWeight();
     int32_t compensation = realTotalWeight - bookTotal;
 
     if (std::abs(compensation) > 10) {
-        category.totalWeight += compensation;
+        LOG_WARN(std::string("Weight compensation needed: real=") + std::to_string(realTotalWeight)
+                 + "g | book=" + std::to_string(bookTotal) + "g | diff=" + std::to_string(compensation) + "g");
+
+        // 计算当前品类数量占总量的比例，按比例分配补偿
+        int32_t totalFruitCount = 0;
+        for (auto const& [t, stock] : mStock) {
+            totalFruitCount += stock.fruits.size();
+        }
+
+        if (totalFruitCount > 0) {
+            // 当前品类应分摊的补偿量
+            int32_t categoryCount = category.fruits.size();
+            int32_t proportionalComp = static_cast<int32_t>(
+                static_cast<float>(compensation) * categoryCount / totalFruitCount);
+            proportionalComp = (compensation > 0)
+                ? std::max(1, proportionalComp)
+                : std::min(-1, proportionalComp);
+            category.totalWeight += proportionalComp;
+            LOG_DATA("Compensation distributed to type=" + std::to_string((int)type)
+                     + ": +" + std::to_string(proportionalComp) + "g (proportional, categoryCount=" + std::to_string(categoryCount)
+                     + "/" + std::to_string(totalFruitCount) + ")");
+        } else {
+            // 无水果时，补偿全部加到当前品类（新增品类场景）
+            category.totalWeight += compensation;
+            LOG_DATA("Compensation (no fruits in stock): all to type=" + std::to_string((int)type)
+                     + ": +" + std::to_string(compensation) + "g");
+        }
     }
 
     // Debug Print

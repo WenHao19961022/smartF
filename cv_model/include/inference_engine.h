@@ -7,11 +7,12 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include "../../common/include/logger.h"
 
 // ==================== TensorRT日志类 ====================
 class TrtLogger : public nvinfer1::ILogger {
     void log(Severity severity, const char* msg) noexcept override {
-        if (severity <= Severity::kWARNING) printf("[TRT] %s\n", msg);
+        if (severity <= Severity::kWARNING) LOG_PRINT("[TRT]", msg);
     }
 };
 
