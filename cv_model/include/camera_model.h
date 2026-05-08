@@ -35,6 +35,7 @@ private:
     int mCameraIndex = 0;
     int mWidth = 640;
     int mHeight = 480;
+    int mFps = 30;
 
     std::atomic<bool> mRunning{false};
     std::atomic<bool> mIsOpened{false};

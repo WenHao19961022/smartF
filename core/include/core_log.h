@@ -3,12 +3,14 @@
 
 #include <string>
 #include <sstream>
+#include "../../common/include/logger.h"
 
+// 日志级别前缀（追加在 tag 之后）
 enum class LogLevel { START, OK, WARN, ERROR, DATA, INFO };
 
+// Core 模块专用日志函数
 void CoreLog(LogLevel level, const std::string &msg, const char* file, int line, const char* func);
 
-// 简洁易用的宏（可在编译时通过定义 DISABLE_CORE_LOG 关闭）
 #ifndef DISABLE_CORE_LOG
 #define LOG_RAW(level, msg) do { std::ostringstream _oss; _oss << msg; CoreLog(level, _oss.str(), __FILE__, __LINE__, __FUNCTION__); } while(0)
 #define LOG_START(msg) LOG_RAW(LogLevel::START, msg)

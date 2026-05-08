@@ -1,6 +1,7 @@
 #include "../include/cv_model_manager.h"
 #include "../include/camera_model.h"
 #include "../../common/include/config_manager.h"
+#include "../../common/include/logger.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -37,13 +38,11 @@ bool CvModelManager::CvModelInit() {
     try {
         mInferenceEngine = std::make_unique<InferenceEngine>(enginePath);
         SetReady();
-        std::cout << "[CvModelManager] TensorRT Engine Initialized Successfully." << std::endl;
+        LOG_PRINT("[CvModel]", "TensorRT Engine Initialized Successfully.");
         return true;
     } catch (const std::exception& e) {
-        std::cerr << "[CvModelManager] TensorRT init failed: " << e.what() << std::endl;
-        std::cerr << "[CvModelManager] CV Model running in simulation mode." << std::endl;
-        SetReady();
-        return true;
+        LOG_PRINT("[CvModel]", "TensorRT init failed: " << e.what());
+        return false;
     }
 }
 
@@ -168,16 +167,15 @@ void CvModelManager::StaticRecognitionInternal() {
                     fruitCounts[key]++;
                 }
 
-                std::cout << "[CvModel] Static: Detection " << (detectionIndex + 1) << " - Detected " << detections.size() << " fruits" << std::endl;
+                LOG_PRINT("[CvModel]", "Static: Detection " << (detectionIndex + 1) << " - Detected " << detections.size() << " fruits");
                 // 打印每个检测的详细信息
                 for (const auto& det : detections) {
-                    std::cout << "  - Type: " << (int)det.fruitType << std::endl;
+                    LOG_PRINT("[CvModel]", "  - Type: " << (int)det.fruitType);
                 }
             }
         } else if (!frame.empty()) {
-            std::cout << "[CvModel] mInferenceEngine is not initialized" << std::endl;
+            LOG_PRINT("[CvModel]", "CameraModule inference engine is not initialized");
         } else {
-            std::cout << "[CvModel] CameraModule is not initialized" << std::endl;
             break;
         }
     }
@@ -228,19 +226,8 @@ void CvModelManager::DynamicRecognitionInternal() {
                 result.fruitInfoWithTimestamp[i].fruitInfo = detections[i];
             }
 
-            std::cout << "[CvModel] Dynamic: Tracked " << (int)result.fruitCount << " fruits" << std::endl;
+            LOG_PRINT("[CvModel]", "Dynamic: Tracked " << (int)result.fruitCount << " fruits");
         }
-    } else if (!frame.empty()) {
-        result.fruitCount = 1;
-        result.fruitInfoWithTimestamp[0].timestamp = static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
-        result.fruitInfoWithTimestamp[0].fruitInfo.fruitType = FruitType::Apple;
-        result.fruitInfoWithTimestamp[0].fruitInfo.freshness = FreshnessLevel::Fresh;
-        result.fruitInfoWithTimestamp[0].fruitInfo.locationX = 150;
-        result.fruitInfoWithTimestamp[0].fruitInfo.locationY = 120;
-
-        std::cout << "[CvModel] Dynamic (SIM): Tracked " << (int)result.fruitCount << " fruits" << std::endl;
     }
 
     {

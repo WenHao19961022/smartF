@@ -4,6 +4,8 @@
 #include <iostream>
 #include <cstdlib>
 #include "../include/message_recever_manager.h"
+#include "../../common/include/logger.h"
+#include "../../common/include/config_manager.h"
 
 // POSIX串口头文件（Jetson/Linux平台）
 #include <fcntl.h>
@@ -32,8 +34,7 @@ bool MessageReceverManager::InitSerial() {
     mSerialFd = open(mSerialPort.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
 
     if (mSerialFd < 0) {
-        std::cerr << "[STM32] Failed to open serial port: " << mSerialPort
-                  << " (" << strerror(errno) << ")" << std::endl;
+        LOG_PRINT("[Stm32]", "Failed to open serial port: " << mSerialPort << " (" << strerror(errno) << ")");
         return false;
     }
 
@@ -41,7 +42,7 @@ bool MessageReceverManager::InitSerial() {
     memset(&tty, 0, sizeof(tty));
 
     if (tcgetattr(mSerialFd, &tty) != 0) {
-        std::cerr << "[STM32] tcgetattr failed: " << strerror(errno) << std::endl;
+        LOG_PRINT("[Stm32]", "tcgetattr failed: " << strerror(errno));
         close(mSerialFd);
         mSerialFd = -1;
         return false;
@@ -82,7 +83,7 @@ bool MessageReceverManager::InitSerial() {
     tty.c_cc[VTIME] = 1;  // 0.1秒超时
 
     if (tcsetattr(mSerialFd, TCSANOW, &tty) != 0) {
-        std::cerr << "[STM32] tcsetattr failed: " << strerror(errno) << std::endl;
+        LOG_PRINT("[Stm32]", "tcsetattr failed: " << strerror(errno));
         close(mSerialFd);
         mSerialFd = -1;
         return false;
@@ -90,8 +91,7 @@ bool MessageReceverManager::InitSerial() {
 
     tcflush(mSerialFd, TCIFLUSH);
 
-    std::cout << "[STM32] Serial port opened: " << mSerialPort
-              << " @ " << mBaudrate << " baud" << std::endl;
+    LOG_PRINT("[Stm32]", "Serial port opened: " << mSerialPort << " @ " << mBaudrate << " baud");
     return true;
 }
 
@@ -102,11 +102,21 @@ void MessageReceverManager::Init() {
     mHistoryInfo = {};
     mDataMutex.unlock();
 
+    // 从配置管理器读取串口参数和变化阈值
+    mSerialPort = ConfigManager::GetInstance().GetString("serial.port", "/dev/ttyUSB0");
+    mBaudrate = ConfigManager::GetInstance().GetInt("serial.baudrate", 115200);
+    mWeightChangeThreshold = static_cast<uint16_t>(
+        ConfigManager::GetInstance().GetInt("serial.weight_threshold", 100));
+    mTemperatureChangeThreshold = static_cast<uint16_t>(
+        ConfigManager::GetInstance().GetInt("serial.temperature_threshold", 1));
+    mHumidityChangeThreshold = static_cast<uint16_t>(
+        ConfigManager::GetInstance().GetInt("serial.humidity_threshold", 5));
+
     // 初始化串口
-    mUseSimulation = false;
     if (!InitSerial()) {
-        std::cerr << "[STM32] Serial init failed, switching to simulation mode" << std::endl;
-        mUseSimulation = true;
+        LOG_PRINT("[Stm32]", "Serial init failed");
+        SetReady(); // 仍然标记为就绪（表示模块已初始化，只是串口不可用）
+        return;
     }
 
     SetReady();
@@ -214,54 +224,25 @@ bool MessageReceverManager::ParseSerialData(
     return false;
 }
 
-void MessageReceverManager::GenerateSimulatedData(FrigeratorInfoWithTimestamp& info) {
-    mSimCounter++;
-
-    info.timestamp = static_cast<uint32_t>(std::time(nullptr));
-
-    // 模拟冰箱温度在3-7°C之间波动
-    info.info.temperature = static_cast<uint16_t>(40 + (rand() % 30));  // 4.0-6.9°C (×10)
-
-    // 模拟湿度在60-90%之间波动
-    info.info.humidity = static_cast<uint16_t>(700 + (rand() % 200));   // 70.0-89.9% (×10)
-
-    // 模拟重量
-    info.info.weight = static_cast<uint16_t>(2000 + (rand() % 500));
-
-    // 模拟门状态：每50次循环切换一次
-    info.info.doorStatus = ((mSimCounter / 50) % 2 == 1)
-        ? DoorStatus::DoorOpen
-        : DoorStatus::DoorClosed;
-}
-
 FrigeratorInfoWithTimestamp MessageReceverManager::GetLatestFrigeratorInfo() {
     FrigeratorInfoWithTimestamp latestInfo = {};
 
-    if (mUseSimulation) {
-        // 模拟模式
-        GenerateSimulatedData(latestInfo);
-    } else {
-        // 串口模式：从STM32读取数据
-        std::vector<uint8_t> serialBuf;
-        if (ReadFromSerial(serialBuf)) {
-            // 打印数据长度和内容（十六进制）
-            std::cout << "[STM32] Read " << serialBuf.size() << " bytes: ";
-            for (uint8_t byte : serialBuf) {
-                std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
-            }
-            std::cout << std::dec << std::endl;
-            if (!ParseSerialData(serialBuf, latestInfo)) {
-                // 解析失败，返回空数据
-                latestInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
-                latestInfo.info = {};
-                // 加入日志记录解析失败的情况
-                std::cout << "[STM32] Failed to parse serial data" << std::endl;
-            }
-        } else {
-            // 读取失败，返回空数据
+    std::vector<uint8_t> serialBuf;
+    if (ReadFromSerial(serialBuf)) {
+        std::ostringstream hexDump;
+        hexDump << "Read " << serialBuf.size() << " bytes: ";
+        for (uint8_t byte : serialBuf) {
+            hexDump << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
+        }
+        LOG_PRINT("[Stm32]", hexDump.str());
+        if (!ParseSerialData(serialBuf, latestInfo)) {
             latestInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
             latestInfo.info = {};
+            LOG_PRINT("[Stm32]", "Failed to parse serial data");
         }
+    } else {
+        latestInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
+        latestInfo.info = {};
     }
 
     return latestInfo;
@@ -282,7 +263,7 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
 
     // 湿度变化超过阈值时记录
     if (std::abs(static_cast<int>(mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1])
-                 - static_cast<int>(newInfo.info.humidity)) > kHumidityChangeThreshold) {
+                 - static_cast<int>(newInfo.info.humidity)) > mHumidityChangeThreshold) {
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.humidityTimestamp[i] = mHistoryInfo.humidityTimestamp[i + 1];
             mHistoryInfo.humidity[i] = mHistoryInfo.humidity[i + 1];
@@ -293,7 +274,7 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
 
     // 温度变化超过阈值时记录
     if (std::abs(static_cast<int>(mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1])
-                 - static_cast<int>(newInfo.info.temperature)) > kTemperatureChangeThreshold) {
+                 - static_cast<int>(newInfo.info.temperature)) > mTemperatureChangeThreshold) {
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.temperatureTimestamp[i] = mHistoryInfo.temperatureTimestamp[i + 1];
             mHistoryInfo.temperature[i] = mHistoryInfo.temperature[i + 1];
@@ -304,7 +285,7 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
 
     // 重量变化超过阈值时记录
     if (std::abs(static_cast<int>(mHistoryInfo.weight[kFridgeHistoryInfoSize - 1])
-                 - static_cast<int>(newInfo.info.weight)) > kWeightChangeThreshold) {
+                 - static_cast<int>(newInfo.info.weight)) > mWeightChangeThreshold) {
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.weightTimestamp[i] = mHistoryInfo.weightTimestamp[i + 1];
             mHistoryInfo.weight[i] = mHistoryInfo.weight[i + 1];

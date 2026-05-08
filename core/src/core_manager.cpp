@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include "../include/core_log.h"
+#include <config_manager.h>
 #include <string>
 
 // 初始化随机数种子
@@ -22,6 +23,11 @@ static std::atomic<uint16_t> gMsgCounter(0);
 
 void CoreManager::Init() {
     LOG_START("初始化开始");
+
+    // 从配置管理器读取业务参数
+    mDeviceId = static_cast<uint32_t>(ConfigManager::GetInstance().GetInt("device.id", 10001));
+    mStaticInterval = std::chrono::seconds(ConfigManager::GetInstance().GetInt("inventory.static_interval_sec", 7200));
+
     FrigeratorHistoryInfo initialInfo = GetFrigeratorInfo();
     mLastDoorState = (initialInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
     mLastStaticTime = std::chrono::steady_clock::now();
@@ -128,7 +134,7 @@ void CoreManager::HandleDoorClose() {
     // 生成 messageId：高16位用 timestamp 低16位，低16位用原子序号
     uint16_t seq = gMsgCounter.fetch_add(1);
     msg.messageId = ((timestamp & 0xFFFFu) << 16) | seq;
-    msg.deviceId = kFridgeDeviceId;
+    msg.deviceId = mDeviceId;
 
     // 填充底层硬件状态 (从 history 中获取)
     msg.fridgeInfo.temperature = history.temperature[kFridgeHistoryInfoSize - 1];
@@ -161,7 +167,7 @@ void CoreManager::HandleDoorClose() {
 
 void CoreManager::CheckTimers() {
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - mLastStaticTime) >= kStaticInterval) {
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - mLastStaticTime) >= mStaticInterval) {
         LOG_START("触发2小时定时静态盘点");
         StartStaticRecognition();
         mIsStaticWaiting = true;
@@ -190,7 +196,7 @@ void CoreManager::ProcessStaticResultOnly() {
     uint32_t timestamp = mqttMsg.time;
     uint16_t seq2 = gMsgCounter.fetch_add(1);
     mqttMsg.messageId = ((timestamp & 0xFFFFu) << 16) | seq2;
-    mqttMsg.deviceId = kFridgeDeviceId;
+    mqttMsg.deviceId = mDeviceId;
 
     mqttMsg.fridgeInfo.temperature = currHistory.temperature[kFridgeHistoryInfoSize - 1];
     mqttMsg.fridgeInfo.humidity = currHistory.humidity[kFridgeHistoryInfoSize - 1];

@@ -1,4 +1,5 @@
 #include "../include/config_manager.h"
+#include "../include/logger.h"
 #include <fstream>
 #include <iostream>
 #include <algorithm>
@@ -25,12 +26,20 @@ ConfigManager::ConfigManager() {
     mConfig["serial.port"] = "/dev/ttyUSB0";
     mConfig["serial.baudrate"] = "115200";
     mConfig["serial.timeout_ms"] = "1000";
+    mConfig["serial.weight_threshold"] = "100";
+    mConfig["serial.temperature_threshold"] = "1";
+    mConfig["serial.humidity_threshold"] = "5";
 
     // CV模型配置
     mConfig["cv.model_path"] = "cv_model/yolov8/yolo12n.engine";
     mConfig["cv.conf_threshold"] = "0.5";
     mConfig["cv.nms_threshold"] = "0.4";
-    mConfig["cv.use_simulation"] = "false";
+
+    // 摄像头配置
+    mConfig["camera.index"] = "0";
+    mConfig["camera.width"] = "640";
+    mConfig["camera.height"] = "480";
+    mConfig["camera.fps"] = "30";
 
     // 业务配置
     mConfig["device.id"] = "10001";
@@ -88,8 +97,8 @@ bool ConfigManager::LoadConfig(const std::string& configPath) {
 
     std::ifstream file(configPath);
     if (!file.is_open()) {
-        std::cerr << "[Config] Failed to open config file: " << configPath << std::endl;
-        std::cerr << "[Config] Using default values." << std::endl;
+        LOG_PRINT("[Config]", "Failed to open config file: " << configPath);
+        LOG_PRINT("[Config]", "Using default values.");
         return false;
     }
 
@@ -98,8 +107,7 @@ bool ConfigManager::LoadConfig(const std::string& configPath) {
         ParseLine(line);
     }
 
-    std::cout << "[Config] Loaded " << mConfig.size() << " settings from: "
-              << configPath << std::endl;
+    LOG_PRINT("[Config]", "Loaded " << mConfig.size() << " settings from: " << configPath);
     return true;
 }
 
@@ -108,7 +116,7 @@ bool ConfigManager::SaveConfig(const std::string& configPath) {
 
     std::ofstream file(configPath);
     if (!file.is_open()) {
-        std::cerr << "[Config] Failed to save config file: " << configPath << std::endl;
+        LOG_PRINT("[Config]", "Failed to save config file: " << configPath);
         return false;
     }
 
@@ -118,8 +126,7 @@ bool ConfigManager::SaveConfig(const std::string& configPath) {
         file << key << " = " << value << "\n";
     }
 
-    std::cout << "[Config] Saved " << mConfig.size() << " settings to: "
-              << configPath << std::endl;
+    LOG_PRINT("[Config]", "Saved " << mConfig.size() << " settings to: " << configPath);
     return true;
 }
 
