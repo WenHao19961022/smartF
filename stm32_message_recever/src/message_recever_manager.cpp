@@ -10,6 +10,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <errno.h>
+#include <iomanip>
 
 MessageReceverManager& MessageReceverManager::GetInstance() {
     static MessageReceverManager instance;
@@ -243,10 +244,18 @@ FrigeratorInfoWithTimestamp MessageReceverManager::GetLatestFrigeratorInfo() {
         // 串口模式：从STM32读取数据
         std::vector<uint8_t> serialBuf;
         if (ReadFromSerial(serialBuf)) {
+            // 打印数据长度和内容（十六进制）
+            std::cout << "[STM32] Read " << serialBuf.size() << " bytes: ";
+            for (uint8_t byte : serialBuf) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
+            }
+            std::cout << std::dec << std::endl;
             if (!ParseSerialData(serialBuf, latestInfo)) {
                 // 解析失败，返回空数据
                 latestInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
                 latestInfo.info = {};
+                // 加入日志记录解析失败的情况
+                std::cout << "[STM32] Failed to parse serial data" << std::endl;
             }
         } else {
             // 读取失败，返回空数据
