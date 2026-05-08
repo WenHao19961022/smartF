@@ -56,6 +56,7 @@ struct DynamicRecognitionResult {
 bool CvModelInit();
 void CvModelMainLoop();
 bool IsCvModelReady();
+bool IsCameraReady();
 void StartStaticRecognition();
 void StartDynamicRecognition();
 void StopStaticRecognition();

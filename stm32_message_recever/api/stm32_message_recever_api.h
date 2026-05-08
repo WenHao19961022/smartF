@@ -40,4 +40,8 @@ struct FrigeratorHistoryInfo {
 FrigeratorHistoryInfo GetFrigeratorInfo();
 void Stm32MessageReceverMainLoop();
 
+// Mock mode: 模拟STM32信号（用于联调测试，无真实硬件时启用）
+void StartMockStm32Mode(int doorOpenDurationSec = 5, int doorClosedDurationSec = 10);
+void StopMockStm32Mode();
+
 #endif // STM32_MESSAGE_RECEVER_API_H

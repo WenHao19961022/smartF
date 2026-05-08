@@ -24,7 +24,7 @@ private:
     uint32_t mDoorOpenTimestamp = 0;
     uint32_t mMessageIdCounter = 0;
     uint32_t mDeviceId = 10001;
-    std::chrono::seconds mStaticInterval{2 * 3600};
+    std::chrono::seconds mStaticInterval{60};  // 静态盘点间隔：1分钟（联调测试用）
 
     std::chrono::steady_clock::time_point mLastStaticTime;
 

@@ -22,3 +22,11 @@ void Stm32MessageReceverMainLoop()
     // 由于这是一个示例，我们暂时调用MessageReceverManager的ProcessMessages方法来处理消息
     MessageReceverManager::GetInstance().MainLoop();
 }
+
+void StartMockStm32Mode(int doorOpenDurationSec, int doorClosedDurationSec) {
+    MessageReceverManager::GetInstance().StartMockMode(doorOpenDurationSec, doorClosedDurationSec);
+}
+
+void StopMockStm32Mode() {
+    MessageReceverManager::GetInstance().StopMockMode();
+}
