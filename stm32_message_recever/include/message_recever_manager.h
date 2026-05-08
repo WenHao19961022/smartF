@@ -4,6 +4,7 @@
 #include <mutex>
 #include <atomic>
 #include <string>
+#include "thread"
 #include <vector>
 #include "../api/stm32_message_recever_api.h"
 
