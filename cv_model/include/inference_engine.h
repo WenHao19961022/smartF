@@ -25,9 +25,12 @@ public:
 
     std::vector<int> GetInputDims() const { return mInputDims; }
     std::vector<int> GetOutputDims() const { return mOutputDims; }
+    bool IsCpuMode() const { return mUseCpu; }
 
 private:
     bool LoadEngine(const std::string& path);
+    bool LoadCpuOnnx(const std::string& enginePath);
+    bool InferCpu(const cv::Mat& frame, std::vector<float>& outputData);
     void Preprocess(const cv::Mat& frame, float* gpuInput);
 
     TrtLogger mLogger;
@@ -40,6 +43,9 @@ private:
     size_t mInputSizeBytes = 0;
     size_t mOutputSizeBytes = 0;
 
+    // CPU 模式
+    bool mUseCpu = false;
+    cv::dnn::Net mCpuNet;
     std::vector<int> mInputDims;
     std::vector<int> mOutputDims;
 };
