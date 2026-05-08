@@ -5,14 +5,9 @@
 #include <atomic>
 #include <string>
 #include "../api/mqtt_message_sender_api.h"
+#include "config_manager.h"
 
 // ==================== 常量 ====================
-const std::string kMqttBrokerAddr = "tcp://localhost:1883";
-const std::string kMqttClientId = "SmartFridge_MQTT_Client";
-const std::string kMqttTopic = "smartfridge/data";
-const int kMqttQos = 1;
-const int kMqttKeepalive = 60;
-
 const bool kInitFinished = true;
 const bool kInitUnfinished = false;
 const bool kSenderIdle = true;

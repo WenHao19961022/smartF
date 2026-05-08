@@ -18,5 +18,5 @@ target_include_directories(mqtt_message_sender_lib
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# 4. 链接第三方库
-target_link_libraries(mqtt_message_sender_lib PRIVATE 3rd_mqtt Threads::Threads)
+# 4. 链接第三方库和公共模块
+target_link_libraries(mqtt_message_sender_lib PRIVATE 3rd_mqtt Threads::Threads common_lib)
