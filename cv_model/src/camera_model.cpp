@@ -1,4 +1,6 @@
 #include "../include/camera_model.h"
+#include "../../common/include/logger.h"
+#include "../../common/include/config_manager.h"
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -9,6 +11,12 @@ CameraModule& CameraModule::GetInstance() {
 }
 
 CameraModule::CameraModule() {
+    // 从配置管理器读取摄像头参数
+    mCameraIndex = ConfigManager::GetInstance().GetInt("camera.index", 0);
+    mWidth = ConfigManager::GetInstance().GetInt("camera.width", 640);
+    mHeight = ConfigManager::GetInstance().GetInt("camera.height", 480);
+    mFps = ConfigManager::GetInstance().GetInt("camera.fps", 30);
+
     mRunning.store(true);
     mIsOpened.store(false);
     mCaptureThread = std::thread(&CameraModule::CaptureThreadFunc, this);
@@ -28,18 +36,17 @@ bool CameraModule::OpenCamera() {
     mCapture.open(mCameraIndex);
 
     if (!mCapture.isOpened()) {
-        std::cerr << "[Camera] Failed to open camera index " << mCameraIndex << std::endl;
+        LOG_PRINT("[Camera]", "Failed to open camera index " << mCameraIndex);
         mIsOpened.store(false);
         return false;
     }
 
     mCapture.set(cv::CAP_PROP_FRAME_WIDTH, mWidth);
     mCapture.set(cv::CAP_PROP_FRAME_HEIGHT, mHeight);
-    mCapture.set(cv::CAP_PROP_FPS, 30);
+    mCapture.set(cv::CAP_PROP_FPS, mFps);
 
     mIsOpened.store(true);
-    std::cout << "[Camera] Camera opened successfully ("
-              << mWidth << "x" << mHeight << ")" << std::endl;
+    LOG_PRINT("[Camera]", "Camera opened successfully (" << mWidth << "x" << mHeight << "@" << mFps << "fps)");
     return true;
 }
 
@@ -72,7 +79,7 @@ void CameraModule::CaptureThreadFunc() {
                 tempFrame.copyTo(mLatestFrame);
             }
         } else {
-            std::cerr << "[Camera] Frame capture failed, scheduling reconnect..." << std::endl;
+            LOG_PRINT("[Camera]", "Frame capture failed, scheduling reconnect...");
             mIsOpened.store(false);
             CloseCamera();
 

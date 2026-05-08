@@ -1,14 +1,10 @@
 #include <iostream>
 #include <thread>
-#include <mutex>
 #include "../include/external_apis.h"
 #include "../include/core_manager.h"
 #include <config_manager.h>
 #include "../include/core_log.h"
 #include <functional>
-
-// 全局互斥锁
-std::mutex coutMutex;
 
 // 模块函数声明
 void LaunchMqttMessageSender() {

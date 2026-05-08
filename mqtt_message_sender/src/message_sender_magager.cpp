@@ -6,6 +6,7 @@
 #include <iostream>
 #include "../include/message_sender_magager.h"
 #include <mqtt/async_client.h>
+#include "logger.h"
 
 MessageSenderManager& MessageSenderManager::GetInstance() {
     static MessageSenderManager instance;
@@ -67,13 +68,13 @@ bool MessageSenderManager::Connect() {
         if (client->is_connected()) {
             mMqttClient = static_cast<void*>(client);
             mConnected.store(true);
-            std::cout << "[MQTT] Successfully connected to broker: " << brokerAddr << std::endl;
+            LOG_PRINT("[Mqtt]", "Successfully connected to broker: " << brokerAddr);
             return true;
         }
     } catch (const mqtt::exception& exc) {
-        std::cerr << "[MQTT] Connection error: " << exc.what() << std::endl;
+        LOG_PRINT("[Mqtt]", "Connection error: " << exc.what());
     } catch (const std::exception& e) {
-        std::cerr << "[MQTT] Standard exception during connection: " << e.what() << std::endl;
+        LOG_PRINT("[Mqtt]", "Standard exception during connection: " << e.what());
     }
 
     return false;
@@ -95,10 +96,10 @@ bool MessageSenderManager::Disconnect() {
         delete client;
         mMqttClient = nullptr;
         mConnected.store(false);
-        std::cout << "[MQTT] Disconnected from broker" << std::endl;
+        LOG_PRINT("[Mqtt]", "Disconnected from broker");
         return true;
     } catch (const mqtt::exception& exc) {
-        std::cerr << "[MQTT] Disconnect error: " << exc.what() << std::endl;
+        LOG_PRINT("[Mqtt]", "Disconnect error: " << exc.what());
         return false;
     }
 }
@@ -111,9 +112,9 @@ void MessageSenderManager::CopyMessage(const MqttMessageStruct& message) {
 bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
     // 如果未连接，尝试重连
     if (!mConnected.load()) {
-        std::cout << "[MQTT] Not connected, attempting to reconnect..." << std::endl;
+        LOG_PRINT("[Mqtt]", "Not connected, attempting to reconnect...");
         if (!Connect()) {
-            std::cerr << "[MQTT] Reconnection failed" << std::endl;
+            LOG_PRINT("[Mqtt]", "Reconnection failed");
             return false;
         }
     }
@@ -121,7 +122,7 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
     std::lock_guard<std::mutex> lock(mMqttMutex);
 
     if (mMqttClient == nullptr) {
-        std::cerr << "[MQTT] Client is null" << std::endl;
+        LOG_PRINT("[Mqtt]", "Client is null");
         return false;
     }
 
@@ -142,16 +143,17 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
         mqtt::token_ptr pubToken = client->publish(pubmsg);
         pubToken->wait_for(std::chrono::seconds(3));
 
-        std::cout << "[MQTT] Message published successfully to topic: " << topic << std::endl;
-        std::cout << "[MQTT] Payload size: " << jsonPayload.size() << " bytes" << std::endl;
+        LOG_PRINT("[Mqtt]", "Message published successfully to topic: " << topic);
+        LOG_PRINT("[Mqtt]", "Payload size: " << jsonPayload.size() << " bytes");
+        LOG_PRINT("[Mqtt]", "Payload JSON:\n" << jsonPayload);
         return true;
 
     } catch (const mqtt::exception& exc) {
-        std::cerr << "[MQTT] Publish error: " << exc.what() << std::endl;
+        LOG_PRINT("[Mqtt]", "Publish error: " << exc.what());
         mConnected.store(false);
         return false;
     } catch (const std::exception& e) {
-        std::cerr << "[MQTT] Standard exception during publish: " << e.what() << std::endl;
+        LOG_PRINT("[Mqtt]", "Standard exception during publish: " << e.what());
         return false;
     }
 }
@@ -174,7 +176,7 @@ void MessageSenderManager::MainLoop() {
                 }
                 messageSendCount++;
                 if (messageSendCount >= maxMessageSendCount) {
-                    std::cerr << "[MQTT] Failed to send message after " << maxMessageSendCount << " attempts" << std::endl;
+                    LOG_PRINT("[Mqtt]", "Failed to send message after " << maxMessageSendCount << " attempts");
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
