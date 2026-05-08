@@ -1,8 +1,10 @@
 #include "../include/inventory_manager.h"
 #include <iostream>
 #include <cstdlib>
+#include <string>
 #include <cmath>
 #include <algorithm>
+#include "../include/core_log.h"
 
 void InventoryManager::HandleDynamicEvent(FruitType type, int32_t weightDelta, int countDelta, uint32_t timestamp, int32_t realTotalWeight) {
     auto& category = mStock[type];
@@ -40,10 +42,10 @@ void InventoryManager::HandleDynamicEvent(FruitType type, int32_t weightDelta, i
     }
 
     // Debug Print
-    std::cout << "[Dynamic] Type:" << (int)type << " | Delta: " << countDelta << "pcs, " << weightDelta << "g"
-              << " | Comp: " << compensation << "g" << std::endl;
-    std::cout << "[Dynamic] Snapshot: Type:" << (int)type << " | Cnt=" << category.fruits.size()
-              << " | Weight=" << category.totalWeight << "g" << std::endl;
+    LOG_DATA(std::string("Dynamic Type:") + std::to_string((int)type) + " | Delta: " + std::to_string(countDelta)
+             + "pcs, " + std::to_string(weightDelta) + "g | Comp: " + std::to_string(compensation) + "g");
+    LOG_INFO(std::string("Dynamic Snapshot Type:") + std::to_string((int)type) + " | Cnt=" + std::to_string(category.fruits.size())
+             + " | Weight=" + std::to_string(category.totalWeight) + "g");
 }
 
 void InventoryManager::HandleStaticEvent(const StaticRecognitionResult& staticRes, uint32_t doorOpenTs) {
@@ -104,14 +106,14 @@ void InventoryManager::HandleStaticEvent(const StaticRecognitionResult& staticRe
     }
 
     // Debug Print
-    std::cout << "[Static] === Current Inventory Snapshot ===" << std::endl;
+    LOG_INFO("=== Current Inventory Snapshot ===");
     for (auto const& [type, stock] : mStock) {
         int32_t avgW = 0;
         if (!stock.fruits.empty()) avgW = stock.totalWeight / (int32_t)stock.fruits.size();
-        std::cout << "[Static] Type:" << (int)type << " | Count:" << stock.fruits.size()
-                  << " | TotalWeight:" << stock.totalWeight << "g" << " | Avg:" << avgW << "g/pc" << std::endl;
+        LOG_INFO(std::string("Type:") + std::to_string((int)type) + " | Count:" + std::to_string(stock.fruits.size())
+                 + " | TotalWeight:" + std::to_string(stock.totalWeight) + "g | Avg:" + std::to_string(avgW) + "g/pc");
     }
-    std::cout << "[Static] ==================================" << std::endl;
+    LOG_INFO("==================================");
 }
 
 std::vector<TrackedFruit> InventoryManager::GetFlattenedStock(std::map<FruitType, int32_t>& avgWeights) {
@@ -123,8 +125,7 @@ std::vector<TrackedFruit> InventoryManager::GetFlattenedStock(std::map<FruitType
         int32_t avg = stock.totalWeight / (int32_t)stock.fruits.size();
         // 异常兜底：如果均重小于等于0，或异常巨大，标记为 999
         if (avg <= 0 || avg > 2000) {
-            std::cout << "[Warning] Abnormal avg weight for Type " << (int)type
-                      << ": " << avg << "g. Fallback to 999." << std::endl;
+            LOG_WARN(std::string("Abnormal avg weight for Type ") + std::to_string((int)type) + ": " + std::to_string(avg) + "g. Fallback to 999.");
             avg = 999;
         }
         avgWeights[type] = avg;

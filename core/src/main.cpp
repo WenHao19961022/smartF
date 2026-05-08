@@ -4,36 +4,28 @@
 #include "../include/external_apis.h"
 #include "../include/core_manager.h"
 #include <config_manager.h>
+#include "../include/core_log.h"
+#include <functional>
 
 // 全局互斥锁
 std::mutex coutMutex;
 
 // 模块函数声明
 void LaunchMqttMessageSender() {
-    {
-        std::lock_guard<std::mutex> lock(coutMutex);
-        std::cout << "MqttMessageSender running in thread " << std::this_thread::get_id() << std::endl;
-    }
+    LOG_START(std::string("MqttMessageSender running in thread ") + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())));
     MqttMessageSenderMainLoop();
 }
 
 void LaunchStm32MessageReceiver() {
-    {
-        std::lock_guard<std::mutex> lock(coutMutex);
-        std::cout << "Stm32MessageReceiver running in thread " << std::this_thread::get_id() << std::endl;
-    }
+    LOG_START(std::string("Stm32MessageReceiver running in thread ") + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())));
     Stm32MessageReceverMainLoop();
 }
 
 void LaunchCvModel() {
-    {
-        std::lock_guard<std::mutex> lock(coutMutex);
-        std::cout << "CvModel running in thread " << std::this_thread::get_id() << std::endl;
-    }
+    LOG_START(std::string("CvModel running in thread ") + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())));
 
     if (!CvModelInit()) {
-        std::lock_guard<std::mutex> lock(coutMutex);
-        std::cerr << "CvModel initialization failed. Exiting CvModel thread." << std::endl;
+        LOG_ERR("CvModel initialization failed. Exiting CvModel thread.");
         return;
     }
 
@@ -41,10 +33,7 @@ void LaunchCvModel() {
 }
 
 void CoreThread() {
-    {
-        std::lock_guard<std::mutex> lock(coutMutex);
-        std::cout << "Core running in thread " << std::this_thread::get_id() << std::endl;
-    }
+    LOG_START(std::string("Core running in thread ") + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())));
     CoreManager manager;
     manager.Init();
     manager.Run();
@@ -65,6 +54,6 @@ int main() {
     t3.join();
     t4.join();
 
-    std::cout << "All modules finished." << std::endl;
+    LOG_OK("All modules finished.");
     return 0;
 }
