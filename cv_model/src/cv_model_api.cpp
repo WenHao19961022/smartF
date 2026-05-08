@@ -13,6 +13,10 @@ bool IsCvModelReady() {
     return CvModelManager::GetInstance().IsCvModelReady();
 }
 
+bool IsCameraReady() {
+    return CvModelManager::GetInstance().IsCameraReady();
+}
+
 void StartStaticRecognition() {
     CvModelManager::GetInstance().SetStaticRecognitionSwitch(kRecognitionSwitchOn);
 }
