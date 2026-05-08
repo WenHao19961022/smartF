@@ -96,6 +96,7 @@ bool MessageReceverManager::InitSerial() {
 }
 
 void MessageReceverManager::Init() {
+    LOG_PRINT("[Stm32]", "=== MessageReceverManager Init START ===");
     mInitStatus.store(kInitUnfinished);
 
     mDataMutex.lock();
@@ -112,22 +113,45 @@ void MessageReceverManager::Init() {
     mHumidityChangeThreshold = static_cast<uint16_t>(
         ConfigManager::GetInstance().GetInt("serial.humidity_threshold", 5));
 
+    LOG_PRINT("[Stm32]", "Config loaded:");
+    LOG_PRINT("[Stm32]", "  - serial_port: " << mSerialPort);
+    LOG_PRINT("[Stm32]", "  - baudrate: " << mBaudrate);
+    LOG_PRINT("[Stm32]", "  - weight_threshold: " << mWeightChangeThreshold << "g");
+    LOG_PRINT("[Stm32]", "  - temperature_threshold: " << mTemperatureChangeThreshold << " (raw units)");
+    LOG_PRINT("[Stm32]", "  - humidity_threshold: " << mHumidityChangeThreshold << " (raw units)");
+
     // 初始化串口
+    LOG_PRINT("[Stm32]", "Attempting to open serial port...");
     if (!InitSerial()) {
-        LOG_PRINT("[Stm32]", "Serial init failed");
+        LOG_PRINT("[Stm32]", "Serial init failed, module will still be marked as ready");
         SetReady(); // 仍然标记为就绪（表示模块已初始化，只是串口不可用）
+        LOG_PRINT("[Stm32]", "=== MessageReceverManager Init END (serial unavailable) ===");
         return;
     }
 
     SetReady();
+    LOG_PRINT("[Stm32]", "=== MessageReceverManager Init END (serial available) ===");
 }
 
 void MessageReceverManager::MainLoop() {
+    LOG_PRINT("[Stm32]", "=== MessageReceverManager MainLoop START ===");
+    int loopCount = 0;
     while (true) {
         FrigeratorInfoWithTimestamp latestInfo = GetLatestFrigeratorInfo();
         UpdateFrigeratorHistoryInfo(latestInfo);
+
+        loopCount++;
+        if (loopCount % 100 == 0) {
+            LOG_PRINT("[Stm32]", "MainLoop heartbeat #" << loopCount
+                      << " | latest: temp=" << (latestInfo.info.temperature / 10.0) << "C"
+                      << " humidity=" << (latestInfo.info.humidity / 10.0) << "%"
+                      << " weight=" << latestInfo.info.weight << "g"
+                      << " door=" << (int)latestInfo.info.doorStatus);
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    LOG_PRINT("[Stm32]", "=== MessageReceverManager MainLoop END ===");
 }
 
 FrigeratorHistoryInfo MessageReceverManager::GetFrigeratorHistoryInfo() {
@@ -235,10 +259,16 @@ FrigeratorInfoWithTimestamp MessageReceverManager::GetLatestFrigeratorInfo() {
             hexDump << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
         }
         LOG_PRINT("[Stm32]", hexDump.str());
-        if (!ParseSerialData(serialBuf, latestInfo)) {
+        if (ParseSerialData(serialBuf, latestInfo)) {
+            LOG_PRINT("[Stm32]", "Parsed successfully: temp=" << (latestInfo.info.temperature / 10.0)
+                      << "C | humidity=" << (latestInfo.info.humidity / 10.0)
+                      << "% | weight=" << latestInfo.info.weight
+                      << "g | door=" << (int)latestInfo.info.doorStatus
+                      << " | ts=" << latestInfo.timestamp);
+        } else {
             latestInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
             latestInfo.info = {};
-            LOG_PRINT("[Stm32]", "Failed to parse serial data");
+            LOG_PRINT("[Stm32]", "Failed to parse serial data (read " << serialBuf.size() << " bytes)");
         }
     } else {
         latestInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
@@ -253,6 +283,9 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
 
     // 门状态变化时记录
     if (mHistoryInfo.doorStatus[kFridgeHistoryInfoSize - 1] != newInfo.info.doorStatus) {
+        LOG_PRINT("[Stm32]", "[HISTORY UPDATE] Door status CHANGED: "
+                  << (int)mHistoryInfo.doorStatus[kFridgeHistoryInfoSize - 1] << " -> " << (int)newInfo.info.doorStatus
+                  << " | ts=" << newInfo.timestamp);
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.doorStatusTimestamp[i] = mHistoryInfo.doorStatusTimestamp[i + 1];
             mHistoryInfo.doorStatus[i] = mHistoryInfo.doorStatus[i + 1];
@@ -262,8 +295,13 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
     }
 
     // 湿度变化超过阈值时记录
-    if (std::abs(static_cast<int>(mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1])
-                 - static_cast<int>(newInfo.info.humidity)) > mHumidityChangeThreshold) {
+    int humidityDiff = std::abs(static_cast<int>(mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1])
+                 - static_cast<int>(newInfo.info.humidity));
+    if (humidityDiff > mHumidityChangeThreshold) {
+        LOG_PRINT("[Stm32]", "[HISTORY UPDATE] Humidity CHANGED: "
+                  << (mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1] / 10.0) << "% -> "
+                  << (newInfo.info.humidity / 10.0) << "%"
+                  << " (diff=" << humidityDiff << " > threshold=" << mHumidityChangeThreshold << ")");
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.humidityTimestamp[i] = mHistoryInfo.humidityTimestamp[i + 1];
             mHistoryInfo.humidity[i] = mHistoryInfo.humidity[i + 1];
@@ -273,8 +311,13 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
     }
 
     // 温度变化超过阈值时记录
-    if (std::abs(static_cast<int>(mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1])
-                 - static_cast<int>(newInfo.info.temperature)) > mTemperatureChangeThreshold) {
+    int tempDiff = std::abs(static_cast<int>(mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1])
+                 - static_cast<int>(newInfo.info.temperature));
+    if (tempDiff > mTemperatureChangeThreshold) {
+        LOG_PRINT("[Stm32]", "[HISTORY UPDATE] Temperature CHANGED: "
+                  << (mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1] / 10.0) << "C -> "
+                  << (newInfo.info.temperature / 10.0) << "C"
+                  << " (diff=" << tempDiff << " > threshold=" << mTemperatureChangeThreshold << ")");
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.temperatureTimestamp[i] = mHistoryInfo.temperatureTimestamp[i + 1];
             mHistoryInfo.temperature[i] = mHistoryInfo.temperature[i + 1];
@@ -284,8 +327,13 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
     }
 
     // 重量变化超过阈值时记录
-    if (std::abs(static_cast<int>(mHistoryInfo.weight[kFridgeHistoryInfoSize - 1])
-                 - static_cast<int>(newInfo.info.weight)) > mWeightChangeThreshold) {
+    int weightDiff = std::abs(static_cast<int>(mHistoryInfo.weight[kFridgeHistoryInfoSize - 1])
+                 - static_cast<int>(newInfo.info.weight));
+    if (weightDiff > mWeightChangeThreshold) {
+        LOG_PRINT("[Stm32]", "[HISTORY UPDATE] Weight CHANGED: "
+                  << mHistoryInfo.weight[kFridgeHistoryInfoSize - 1] << "g -> "
+                  << newInfo.info.weight << "g"
+                  << " (diff=" << weightDiff << " > threshold=" << mWeightChangeThreshold << "g)");
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.weightTimestamp[i] = mHistoryInfo.weightTimestamp[i + 1];
             mHistoryInfo.weight[i] = mHistoryInfo.weight[i + 1];
