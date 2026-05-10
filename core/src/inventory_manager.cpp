@@ -117,7 +117,7 @@ void InventoryManager::Reconcile(
             }
         } else if (delta < 0) {
             int removeCount = std::abs(delta);
-            if (removeCount >= category.fruits.size()) category.fruits.clear();
+            if (static_cast<size_t>(removeCount) >= category.fruits.size()) category.fruits.clear();
             else category.fruits.erase(category.fruits.begin(), category.fruits.begin() + removeCount);
         }
     }
@@ -144,7 +144,7 @@ void InventoryManager::Reconcile(
 
         int fruitIdx = 0;
         for (uint8_t i = 0; i < statRes.fruitCount; ++i) {
-            if (statRes.fruits[i].fruitType == type && fruitIdx < currentCount) {
+            if (statRes.fruits[i].fruitType == type && static_cast<size_t>(fruitIdx) < currentCount) {
                 category.fruits[fruitIdx].freshness = static_cast<uint8_t>(statRes.fruits[i].freshness);
                 category.fruits[fruitIdx].locationX = statRes.fruits[i].locationX;
                 category.fruits[fruitIdx].locationY = statRes.fruits[i].locationY;
@@ -176,11 +176,31 @@ void InventoryManager::Reconcile(
     LOG_OK("Reconcile V5.0 完成 | 最终物理总重守恒: " << finalStableWeight << "g");
 }
 
-void InventoryManager::HandleStaticEvent(const StaticRecognitionResult& statRes, uint32_t batchTs) {
-    std::map<FruitType, int32_t> emptyDraftDelta;
-    std::map<FruitType, int32_t> emptyDynCountDelta;
-    int32_t finalStableWeight = GetBookTotalWeight();
-    Reconcile(emptyDraftDelta, emptyDynCountDelta, statRes, finalStableWeight, batchTs);
+// void InventoryManager::HandleStaticEvent(const StaticRecognitionResult& statRes, uint32_t batchTs) {
+//     std::map<FruitType, int32_t> emptyDraftDelta;
+//     std::map<FruitType, int32_t> emptyDynCountDelta;
+//     int32_t finalStableWeight = GetBookTotalWeight();
+//     Reconcile(emptyDraftDelta, emptyDynCountDelta, statRes, finalStableWeight, batchTs);
+// }
+
+// [新增] 定时刷新属性的具体实现
+void InventoryManager::UpdateStaticProperties(const StaticRecognitionResult& statRes) {
+    LOG_INFO("执行定时刷新：对齐最新新鲜度与坐标");
+    
+    // 遍历现有账本，仅将最新的新鲜度和坐标覆盖上去
+    for (auto& [type, category] : mStock) {
+        int fruitIdx = 0;
+        for (uint8_t i = 0; i < statRes.fruitCount; ++i) {
+            // 类型匹配且不超出当前记录数量时覆写
+            if (statRes.fruits[i].fruitType == type && static_cast<size_t>(fruitIdx) < category.fruits.size()) {
+                category.fruits[fruitIdx].freshness = static_cast<uint8_t>(statRes.fruits[i].freshness);
+                category.fruits[fruitIdx].locationX = statRes.fruits[i].locationX;
+                category.fruits[fruitIdx].locationY = statRes.fruits[i].locationY;
+                fruitIdx++;
+            }
+        }
+    }
+    LOG_OK("定时刷新完毕");
 }
 
 // ============== 辅助函数实现 (不需改变) ==============

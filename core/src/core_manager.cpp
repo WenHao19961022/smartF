@@ -8,7 +8,7 @@ static std::atomic<uint16_t> gMsgCounter{0};
 
 static void WaitForStaticBusy() {
     while (IsStaticRecognitionIdle()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 }
 
@@ -20,7 +20,7 @@ static void WaitForStaticIdle() {
 
 static void WaitForDynamicBusy() {
     while (IsDynamicRecognitionIdle()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 }
 
@@ -128,8 +128,8 @@ void CoreManager::HandleDoorOpen() {
     
     // 此时静态必定Idle，可以安全启动动态
     StartDynamicRecognition();
-    WaitForDynamicBusy();
-    LOG_INFO("动态识别已启动并进入忙碌状态");
+ //   WaitForDynamicBusy();             ///////////////安全问题待讨论
+    LOG_INFO("开门动态识别启动");
 }
 
 // V5.0: 滑动窗口算法，抵抗手扶隔板的高频噪声
@@ -177,7 +177,7 @@ void CoreManager::HandleDoorClose() {
     DynamicRecognitionResult dyn = GetDynamicRecognitionResult();
 
     StartStaticRecognition();
-    WaitForStaticBusy();
+    WaitForStaticBusy();       /////安全问题待讨论
     WaitForStaticIdle();
     StaticRecognitionResult stat = GetStaticRecognitionResult();
 
@@ -286,19 +286,20 @@ void CoreManager::CheckTimers() {
     // 假设 mStaticInterval 在头文件中定义 (例如 std::chrono::seconds mStaticInterval{7200})
     if (now - mLastStaticTime > mStaticInterval) {
         LOG_INFO("定时器触发：启动静态检测更新新鲜度");
-
-        // 先等待动态完全空闲，避免互斥冲突
-        WaitForDynamicIdle();
-
-        StartStaticRecognition();
-        WaitForStaticBusy();
-        mIsStaticWaiting = true;
-        mLastStaticTime = now;
+        
+        // 防并发双重保险：确保此时动态模型完全空闲
+        if (IsDynamicRecognitionIdle()) {
+            StartStaticRecognition();
+            mIsStaticWaiting = true;
+            mLastStaticTime = now;
+        } else {
+            LOG_WARN("定时器触发，但动态模型未空闲，跳过本次触发");
+        }
     }
 }
 
 void CoreManager::ProcessStaticResultOnly() {
-    LOG_START("收到静态照片，开始终极对账");
+    LOG_START("处理定时静态检测结果");
     mIsStaticWaiting = false;
     StaticRecognitionResult stat = GetStaticRecognitionResult();
 
@@ -309,8 +310,8 @@ void CoreManager::ProcessStaticResultOnly() {
                  << " | freshness=" << (int)stat.fruits[i].freshness);
     }
 
-    // 直接用静态结果做对账并上报（使用上一次开门时间戳作为批次UID）
-    mInventoryManager.HandleStaticEvent(stat, mDoorOpenTimestamp);
+    // 调用 InventoryManager 仅刷新属性（使用上一次开门时间戳作为批次UID）
+    mInventoryManager.UpdateStaticProperties(stat);
 
     FrigeratorHistoryInfo currHistory = GetFrigeratorInfo();
     uint16_t currWeight = currHistory.weight[kFridgeHistoryInfoSize - 1];
