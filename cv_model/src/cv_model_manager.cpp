@@ -442,7 +442,7 @@ void CvModelManager::DynamicMonitoringStep() {
 
     // 检测是否有新水果出现（不在追踪列表中的）
     for (const auto& det : latestDetections) {
-        FruitInfo* existing = FindTrackedFruit(det.fruitType, det.locationX, det.locationY);
+        bool existing = HasTrackedFruit(det.fruitType, det.locationX, det.locationY);
         if (!existing) {
             // 新水果，加入追踪列表
             TrackedFruitState state;
@@ -550,15 +550,15 @@ bool CvModelManager::IsFruitSimilar(const FruitInfo& a, const FruitInfo& b) cons
     return dist < kDynamicPositionTolerance;
 }
 
-FruitInfo* CvModelManager::FindTrackedFruit(FruitType type, uint8_t x, uint8_t y) {
+bool CvModelManager::HasTrackedFruit(FruitType type, uint8_t x, uint8_t y) {
     FruitInfo target{type, x, y, FreshnessLevel::Fresh};
     for (auto& tracked : mTrackedFruits) {
         FruitInfo trackedInfo{tracked.fruitType, tracked.locationX, tracked.locationY, FreshnessLevel::Fresh};
         if (IsFruitSimilar(target, trackedInfo)) {
-            return &trackedInfo;  // 仅用于判断是否存在
+            return true;
         }
     }
-    return nullptr;
+    return false;
 }
 
 // ==================== 结果获取 ====================

@@ -26,7 +26,6 @@ const int kDynamicBaselineFrames = 10;  // 开关ON后前N帧确立基准
 const float kDynamicDisappearRatio = 0.3f;  // 出现率<30%判定消失（TAKE_OUT）
 const float kDynamicAppearRatio = 0.7f;     // 出现率>70%判定新增（PUT_IN）
 const int kDynamicPositionTolerance = 20;   // 位置容差（像素）
-const uint8_t kMaxDynamicEventCount = 20;   // 单次开门最大变化事件数
 
 // ==================== 水果状态追踪项 ====================
 // 用于追踪每个被监测水果的出现/消失状态
@@ -79,7 +78,7 @@ private:
 
     // 工具方法
     bool IsFruitSimilar(const FruitInfo& a, const FruitInfo& b) const;
-    FruitInfo* FindTrackedFruit(FruitType type, uint8_t x, uint8_t y);
+    bool HasTrackedFruit(FruitType type, uint8_t x, uint8_t y);
     void RecordChangeEvent(FruitType type, FruitChangeAction action, uint8_t x, uint8_t y);
     bool IsStaticRecognitionSwitchOn() const { return mStaticRecognitionSwitch.load(); }
     bool IsDynamicRecognitionSwitchOn() const { return mDynamicRecognitionSwitch.load(); }
