@@ -9,13 +9,17 @@
 #include <map>
 #include <set>
 #include <tuple>
+#include <algorithm>
+#include <numeric>
 
 CvModelManager& CvModelManager::GetInstance() {
     static CvModelManager instance;
     return instance;
 }
 
-CvModelManager::CvModelManager() {
+CvModelManager::CvModelManager()
+    : mBaselineFrameCount(0)
+    , mBaselineEstablished(false) {
 }
 
 CvModelManager::~CvModelManager() {
@@ -28,16 +32,19 @@ bool CvModelManager::CvModelInit() {
     mDynamicRecognitionSwitch.store(kRecognitionSwitchOff);
     mStaticRecognitionStatus.store(kRecognitionIdle);
     mDynamicRecognitionStatus.store(kRecognitionIdle);
-    mDynamicRecognitionRunning.store(false);
 
     mDataMutex.lock();
     mStaticRecognitionResult = {};
     mDynamicRecognitionResult = {};
     mDataMutex.unlock();
 
-    mSlidingWindowMutex.lock();
-    mSlidingWindowResults.clear();
-    mSlidingWindowMutex.unlock();
+    {
+        std::lock_guard<std::mutex> lock(mDynamicMutex);
+        mTrackedFruits.clear();
+        mWindowFrames.clear();
+        mBaselineFrameCount = 0;
+        mBaselineEstablished = false;
+    }
 
     std::string enginePath = ConfigManager::GetInstance().GetString("cv.model_path", "cv_model/yolov8/yolo12n.engine");
     std::string onnxPath = ConfigManager::GetInstance().GetString("cv.model_onnx_path", "cv_model/yolov8/yolo12n.onnx");
@@ -61,6 +68,7 @@ bool CvModelManager::IsCameraReady() const {
     return CameraModule::GetInstance().IsOpened();
 }
 
+// ==================== MainLoop ====================
 void CvModelManager::MainLoop() {
     LOG_PRINT("[CvModel]", "MainLoop started");
     while (true) {
@@ -69,32 +77,23 @@ void CvModelManager::MainLoop() {
             continue;
         }
 
+        // --- 静态识别触发 ---
         if (IsStaticRecognitionSwitchOn() && IsStaticRecognitionIdle()) {
-            LOG_PRINT("[CvModel]", "MainLoop: StaticRecognition triggered (switch=ON, status=IDLE)");
+            LOG_PRINT("[CvModel]", "MainLoop: StaticRecognition triggered");
             StaticRecognitionInternal();
         }
 
-        // 动态采样模式：开关打开且运行中，持续采样帧
+        // --- 动态识别：开关ON & 动态空闲 → 进入动态识别流程 ---
         if (IsDynamicRecognitionSwitchOn() && IsDynamicRecognitionIdle()) {
-            // StartDynamicRecognition 调用：初始化滑动窗口 + 进入采样模式
-            StartDynamicSampling();
-        }
-
-        // 动态采样中：持续采样
-        if (mDynamicRecognitionRunning.load()) {
-            DynamicSamplingStep();
-        }
-
-        // 动态识别结束：开关关闭，触发综合
-        if (!IsDynamicRecognitionSwitchOn() && IsDynamicRecognitionIdle() && mDynamicRecognitionRunning.load()) {
-            // StopDynamicRecognition 调用：停止采样 + 综合结果
-            StopDynamicSampling();
+            LOG_PRINT("[CvModel]", "MainLoop: DynamicRecognition triggered (switch=ON, status=IDLE)");
+            DynamicRecognitionLoop();
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
 
+// ==================== YOLO后处理 ====================
 static std::vector<FruitInfo> PostProcessYOLO(
     const std::vector<float>& output,
     const std::vector<int>& outputDims,
@@ -171,6 +170,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
     return results;
 }
 
+// ==================== 静态识别 ====================
 void CvModelManager::StaticRecognitionInternal() {
     LOG_PRINT("[CvModel]", "=== StaticRecognitionInternal START ===");
     SetStaticRecognitionStatus(kRecognitionBusy);
@@ -181,48 +181,28 @@ void CvModelManager::StaticRecognitionInternal() {
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
-    LOG_PRINT("[CvModel]", "Static recognition target: " << kStaticDetectionCount << " detections");
-    LOG_PRINT("[CvModel]", "Timestamp: " << result.timestamp);
-
     int successfulDetections = 0;
     auto startTime = std::chrono::steady_clock::now();
 
     for (int detectionIndex = 0; detectionIndex < kStaticDetectionCount; ++detectionIndex) {
         if (!IsStaticRecognitionSwitchOn()) {
-            LOG_PRINT("[CvModel]", "Static recognition cancelled at detection " << detectionIndex << " (switch turned OFF)");
+            LOG_PRINT("[CvModel]", "Static recognition cancelled at detection " << detectionIndex);
             break;
         }
 
         cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
 
         if (!frame.empty() && mInferenceEngine) {
-            LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << "/" << kStaticDetectionCount
-                      << " | Frame: " << frame.cols << "x" << frame.rows << " channels=" << frame.channels());
             std::vector<float> rawOutput;
             if (mInferenceEngine->Infer(frame, rawOutput)) {
                 auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
-
                 for (const auto& det : detections) {
                     auto key = std::make_tuple(det.fruitType, det.locationX, det.locationY);
                     fruitCounts[key]++;
                 }
-
                 successfulDetections++;
-                LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Detected " << detections.size() << " fruits");
-                // 打印每个检测的详细信息
-                for (const auto& det : detections) {
-                    LOG_PRINT("[CvModel]", "  - Type: " << (int)det.fruitType
-                              << " | Pos: (" << (int)det.locationX << "," << (int)det.locationY << ")"
-                              << " | Freshness: " << (int)det.freshness);
-                }
-            } else {
-                LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Inference failed");
             }
-        } else if (!frame.empty()) {
-            LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Inference engine not initialized");
-        } else {
-            // 空帧：跳过本次，继续下一帧（问题4修复）
-            LOG_PRINT("[CvModel]", "Detection " << (detectionIndex + 1) << " - Empty frame, skipping...");
+        } else if (frame.empty()) {
             continue;
         }
     }
@@ -232,27 +212,15 @@ void CvModelManager::StaticRecognitionInternal() {
     LOG_PRINT("[CvModel]", "Static recognition completed " << successfulDetections << "/" << kStaticDetectionCount
               << " detections in " << durationMs << "ms");
 
-    // 多数确认：水果出现次数 ≥ kStaticConfirmThreshold（≥3/5）（问题3修复）
+    // 多数确认
     std::vector<FruitInfo> finalDetections;
-    int confirmedFruits = 0;
     for (const auto& pair : fruitCounts) {
-        LOG_PRINT("[CvModel]", "Fruit candidate: Type=" << (int)std::get<0>(pair.first)
-                  << " Pos=(" << (int)std::get<1>(pair.first) << "," << (int)std::get<2>(pair.first) << ")"
-                  << " | Count=" << pair.second << "/" << kStaticDetectionCount);
         if (pair.second >= kStaticConfirmThreshold) {
             FruitInfo info;
             std::tie(info.fruitType, info.locationX, info.locationY) = pair.first;
             info.freshness = FreshnessLevel::Fresh;
             finalDetections.push_back(info);
-            confirmedFruits++;
         }
-    }
-
-    LOG_PRINT("[CvModel]", "Final confirmed fruits: " << confirmedFruits << " (must appear in ≥" << kStaticConfirmThreshold << "/" << kStaticDetectionCount << " detections)");
-
-    // 兜底：如果有效检测次数 < threshold，打印警告但不终止
-    if (successfulDetections < kStaticConfirmThreshold) {
-        LOG_PRINT("[CvModel]", "WARNING: Only " << successfulDetections << " successful detections (< threshold " << kStaticConfirmThreshold << ")");
     }
 
     result.fruitCount = std::min(static_cast<uint8_t>(finalDetections.size()), kMaxStaticFruitCount);
@@ -265,181 +233,335 @@ void CvModelManager::StaticRecognitionInternal() {
         mStaticRecognitionResult = result;
     }
 
-    LOG_PRINT("[CvModel]", "Static result stored: fruitCount=" << (int)result.fruitCount
-              << " | timestamp=" << result.timestamp);
-    LOG_PRINT("[CvModel]", "=== StaticRecognitionInternal END ===");
+    LOG_PRINT("[CvModel]", "=== StaticRecognitionInternal END === fruitCount=" << (int)result.fruitCount);
 
     SetStaticRecognitionSwitch(kRecognitionSwitchOff);
     SetStaticRecognitionStatus(kRecognitionIdle);
 }
 
-void CvModelManager::StartDynamicSampling() {
-    LOG_PRINT("[CvModel]", "=== StartDynamicSampling: Initializing sliding window ===");
-    mDynamicRecognitionRunning.store(true);
-    {
-        std::lock_guard<std::mutex> lock(mSlidingWindowMutex);
-        mSlidingWindowResults.clear();
-    }
-    LOG_PRINT("[CvModel]", "Sliding window initialized, sampling will begin");
-}
+// ==================== 动态识别主循环（新版） ====================
+void CvModelManager::DynamicRecognitionLoop() {
+    LOG_PRINT("[CvModel]", "=== DynamicRecognitionLoop START ===");
+    SetDynamicRecognitionStatus(kRecognitionBusy);
 
-void CvModelManager::StopDynamicSampling() {
-    LOG_PRINT("[CvModel]", "=== StopDynamicSampling: Aggregating results ===");
-    mDynamicRecognitionRunning.store(false);
-    DynamicAggregateResults();
+    // 初始化动态识别状态
+    {
+        std::lock_guard<std::mutex> lock(mDynamicMutex);
+        mTrackedFruits.clear();
+        mWindowFrames.clear();
+        mBaselineFrameCount = 0;
+        mBaselineEstablished = false;
+    }
+
+    LOG_PRINT("[CvModel]", "DynamicRecognitionLoop: entering baseline + monitoring loop");
+
+    // 主循环：持续运行直到开关关闭
+    while (IsDynamicRecognitionSwitchOn()) {
+        // 获取一帧并推理
+        cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
+        if (frame.empty() || !mInferenceEngine) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        std::vector<float> rawOutput;
+        if (!mInferenceEngine->Infer(frame, rawOutput)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
+
+        {
+            std::lock_guard<std::mutex> lock(mDynamicMutex);
+
+            if (!mBaselineEstablished) {
+                // ===== 基准建立阶段 =====
+                mWindowFrames.push_back(detections);
+                mBaselineFrameCount++;
+
+                if (mBaselineFrameCount >= kDynamicBaselineFrames) {
+                    DynamicEstablishBaseline();
+                    mBaselineEstablished = true;
+                    LOG_PRINT("[CvModel]", "Baseline established, switching to monitoring mode");
+                }
+            } else {
+                // ===== 监测阶段 =====
+                // 加入滑动窗口
+                mWindowFrames.push_back(detections);
+                if (static_cast<int>(mWindowFrames.size()) > kDynamicWindowSize) {
+                    mWindowFrames.erase(mWindowFrames.begin());
+                }
+
+                // 更新追踪水果状态
+                DynamicMonitoringStep();
+                // 检测变化
+                DynamicCheckChanges();
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 开关被关闭，构建最终结果
+    LOG_PRINT("[CvModel]", "DynamicRecognitionLoop: switch OFF, building final result");
+
+    DynamicRecognitionResult result = {};
+    {
+        std::lock_guard<std::mutex> dynLock(mDynamicMutex);
+
+        // 如果基准还没建立就结束了，结果为空
+        if (mBaselineEstablished) {
+            // 做最后一轮变化检测（处理还在pending中的变化）
+            DynamicCheckChanges();
+        }
+
+        // 从 trackedFruits 中收集所有 confirmed 变化事件
+        // 同时也从动态结果中读取之前记录的事件
+        {
+            std::lock_guard<std::mutex> dataLock(mDataMutex);
+            result = mDynamicRecognitionResult;
+        }
+    }
+
+    LOG_PRINT("[CvModel]", "DynamicRecognitionLoop: eventCount=" << (int)result.eventCount);
+    for (uint8_t i = 0; i < result.eventCount; ++i) {
+        LOG_PRINT("[CvModel]", "  Event[" << (int)i << "]: type=" << (int)result.events[i].fruitType
+                  << " action=" << (result.events[i].action == FruitChangeAction::PUT_IN ? "PUT_IN" : "TAKE_OUT")
+                  << " ts=" << result.events[i].timestamp);
+    }
+    LOG_PRINT("[CvModel]", "=== DynamicRecognitionLoop END ===");
+
+    // 清理动态识别状态
+    {
+        std::lock_guard<std::mutex> lock(mDynamicMutex);
+        mTrackedFruits.clear();
+        mWindowFrames.clear();
+        mBaselineFrameCount = 0;
+        mBaselineEstablished = false;
+    }
+
     SetDynamicRecognitionStatus(kRecognitionIdle);
 }
 
-void CvModelManager::DynamicSamplingStep() {
-    cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
-    if (frame.empty() || !mInferenceEngine) {
-        return;
-    }
+// ==================== 确立基准 ====================
+void CvModelManager::DynamicEstablishBaseline() {
+    // 统计每种水果在基准帧中的出现次数
+    // 使用位置容差合并同类水果
+    struct Candidate {
+        FruitType type;
+        float sumX, sumY;
+        int count;
+    };
+    std::vector<Candidate> candidates;
 
-    std::vector<float> rawOutput;
-    if (!mInferenceEngine->Infer(frame, rawOutput)) {
-        return;
-    }
+    for (const auto& frameDetections : mWindowFrames) {
+        std::vector<bool> candidateUsed(candidates.size(), false);
 
-    auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
+        for (const auto& fruit : frameDetections) {
+            bool matched = false;
+            for (size_t j = 0; j < candidates.size(); ++j) {
+                if (candidates[j].type != fruit.fruitType) continue;
 
-    {
-        std::lock_guard<std::mutex> lock(mSlidingWindowMutex);
-        mSlidingWindowResults.push_back(detections);
-        // 限制滑动窗口大小
-        if (mSlidingWindowResults.size() > kDynamicSlidingWindowSize) {
-            mSlidingWindowResults.erase(mSlidingWindowResults.begin());
-        }
-        LOG_PRINT("[CvModel]", "Dynamic sampling: frame captured, window size=" << mSlidingWindowResults.size());
-    }
-}
+                float dx = fruit.locationX - (candidates[j].sumX / candidates[j].count);
+                float dy = fruit.locationY - (candidates[j].sumY / candidates[j].count);
+                float dist = std::sqrt(dx * dx + dy * dy);
 
-void CvModelManager::DynamicAggregateResults() {
-    LOG_PRINT("[CvModel]", "=== DynamicAggregateResults START ===");
-    SetDynamicRecognitionStatus(kRecognitionBusy);
+                if (dist < kDynamicPositionTolerance) {
+                    candidates[j].sumX += fruit.locationX;
+                    candidates[j].sumY += fruit.locationY;
+                    candidates[j].count++;
+                    matched = true;
+                    break;
+                }
+            }
 
-    std::vector<std::vector<FruitInfo>> window;
-    {
-        std::lock_guard<std::mutex> lock(mSlidingWindowMutex);
-        window = mSlidingWindowResults;
-    }
-
-    // 滑动窗口为空时返回空结果
-    if (window.empty()) {
-        LOG_PRINT("[CvModel]", "Dynamic: Sliding window empty, returning empty result");
-        DynamicRecognitionResult emptyResult = {};
-        {
-            std::lock_guard<std::mutex> lock(mDataMutex);
-            mDynamicRecognitionResult = emptyResult;
-        }
-        return;
-    }
-
-    int windowSize = static_cast<int>(window.size());
-    int confirmThreshold = static_cast<int>(std::ceil(windowSize * kDynamicConfirmRatio));
-    LOG_PRINT("[CvModel]", "Dynamic: windowSize=" << windowSize << " confirmThreshold=" << confirmThreshold
-              << " (>=40% of frames)");
-
-    // Step 1: 统计每种水果的出现次数（按 type+location 分组）
-    std::map<std::tuple<FruitType, uint8_t, uint8_t>, int> fruitCounts;
-    for (const auto& frameResults : window) {
-        std::set<std::tuple<FruitType, uint8_t, uint8_t>> seenInFrame;
-        for (const auto& fruit : frameResults) {
-            auto key = std::make_tuple(fruit.fruitType, fruit.locationX, fruit.locationY);
-            // 每帧同类水果只计一次（避免单帧重复检测导致的权重偏差）
-            if (seenInFrame.find(key) == seenInFrame.end()) {
-                fruitCounts[key]++;
-                seenInFrame.insert(key);
+            if (!matched) {
+                candidates.push_back({fruit.fruitType,
+                                      static_cast<float>(fruit.locationX),
+                                      static_cast<float>(fruit.locationY), 1});
             }
         }
     }
 
-    // Step 2: 出现次数 > threshold 的水果被确认
-    std::vector<FruitInfo> confirmedFruits;
-    for (const auto& pair : fruitCounts) {
-        LOG_PRINT("[CvModel]", "Dynamic candidate: Type=" << (int)std::get<0>(pair.first)
-                  << " Pos=(" << (int)std::get<1>(pair.first) << "," << (int)std::get<2>(pair.first) << ")"
-                  << " | Appeared in " << pair.second << "/" << windowSize << " frames");
-        if (pair.second >= confirmThreshold) {
-            FruitInfo info;
-            std::tie(info.fruitType, info.locationX, info.locationY) = pair.first;
-            info.freshness = FreshnessLevel::Fresh;
-            confirmedFruits.push_back(info);
+    // 在 >= 50% 的基准帧中出现的水果视为基准水果
+    int threshold = static_cast<int>(std::ceil(kDynamicBaselineFrames * 0.5f));
+    LOG_PRINT("[CvModel]", "EstablishBaseline: " << candidates.size() << " candidates, threshold=" << threshold);
+
+    for (const auto& cand : candidates) {
+        if (cand.count >= threshold) {
+            TrackedFruitState state;
+            state.fruitType = cand.type;
+            state.locationX = static_cast<uint8_t>(std::min(255, static_cast<int>(cand.sumX / cand.count)));
+            state.locationY = static_cast<uint8_t>(std::min(255, static_cast<int>(cand.sumY / cand.count)));
+            state.isBaseline = true;
+            state.alreadyConfirmed = false;
+            state.continuousCount = 0;
+            state.continuousAbsentCount = 0;
+            state.totalAppearCount = kDynamicWindowSize;  // 初始认为全窗口都存在
+
+            mTrackedFruits.push_back(state);
+            LOG_PRINT("[CvModel]", "  Baseline fruit: type=" << (int)state.fruitType
+                      << " pos=(" << (int)state.locationX << "," << (int)state.locationY << ")"
+                      << " appeared=" << cand.count << "/" << kDynamicBaselineFrames);
         }
     }
 
-    // Step 3: 构建结果（包含所有确认的水果类型，问题2修复）
-    DynamicRecognitionResult result = {};
-    uint32_t timestamp = static_cast<uint32_t>(
+    LOG_PRINT("[CvModel]", "Baseline established: " << mTrackedFruits.size() << " fruits");
+}
+
+// ==================== 监测步骤（更新追踪状态） ====================
+void CvModelManager::DynamicMonitoringStep() {
+    if (mWindowFrames.empty()) return;
+
+    // 取最新一帧的检测结果
+    const auto& latestDetections = mWindowFrames.back();
+
+    // 标记每个追踪水果在本帧是否被检测到
+    for (auto& tracked : mTrackedFruits) {
+        bool found = false;
+        for (const auto& det : latestDetections) {
+            if (det.fruitType == tracked.fruitType && IsFruitSimilar(det, {tracked.fruitType, tracked.locationX, tracked.locationY, FreshnessLevel::Fresh})) {
+                found = true;
+                // 更新位置（平滑）
+                tracked.locationX = static_cast<uint8_t>((tracked.locationX * 7 + det.locationX * 3) / 10);
+                tracked.locationY = static_cast<uint8_t>((tracked.locationY * 7 + det.locationY * 3) / 10);
+                break;
+            }
+        }
+
+        if (found) {
+            tracked.continuousCount++;
+            tracked.continuousAbsentCount = 0;
+            tracked.totalAppearCount++;
+        } else {
+            tracked.continuousAbsentCount++;
+            tracked.continuousCount = 0;
+        }
+    }
+
+    // 检测是否有新水果出现（不在追踪列表中的）
+    for (const auto& det : latestDetections) {
+        FruitInfo* existing = FindTrackedFruit(det.fruitType, det.locationX, det.locationY);
+        if (!existing) {
+            // 新水果，加入追踪列表
+            TrackedFruitState state;
+            state.fruitType = det.fruitType;
+            state.locationX = det.locationX;
+            state.locationY = det.locationY;
+            state.isBaseline = false;
+            state.alreadyConfirmed = false;
+            state.continuousCount = 1;
+            state.continuousAbsentCount = 0;
+            state.totalAppearCount = 1;
+            mTrackedFruits.push_back(state);
+            LOG_PRINT("[CvModel]", "New fruit detected: type=" << (int)det.fruitType
+                      << " pos=(" << (int)det.locationX << "," << (int)det.locationY << ")");
+        }
+    }
+}
+
+// ==================== 检测变化 ====================
+void CvModelManager::DynamicCheckChanges() {
+    int windowSize = static_cast<int>(mWindowFrames.size());
+    if (windowSize < kDynamicWindowSize) return;  // 窗口未满，不检测
+
+    uint32_t now = static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
-    result.fruitCount = std::min(static_cast<uint8_t>(confirmedFruits.size()), kMaxDynamicFruitCount);
-    for (uint8_t i = 0; i < result.fruitCount; ++i) {
-        result.fruitInfoWithTimestamp[i].timestamp = timestamp;
-        result.fruitInfoWithTimestamp[i].fruitInfo = confirmedFruits[i];
-    }
+    for (auto& tracked : mTrackedFruits) {
+        if (tracked.alreadyConfirmed) continue;
 
-    LOG_PRINT("[CvModel]", "Dynamic: Confirmed " << (int)result.fruitCount << " unique fruit types");
-    for (uint8_t i = 0; i < result.fruitCount; ++i) {
-        LOG_PRINT("[CvModel]", "  Dynamic[" << (int)i << "]: Type=" << (int)result.fruitInfoWithTimestamp[i].fruitInfo.fruitType
-                  << " | Pos=(" << (int)result.fruitInfoWithTimestamp[i].fruitInfo.locationX
-                  << "," << (int)result.fruitInfoWithTimestamp[i].fruitInfo.locationY << ")");
-    }
+        float ratio = static_cast<float>(tracked.totalAppearCount) / windowSize;
 
-    {
-        std::lock_guard<std::mutex> lock(mDataMutex);
-        mDynamicRecognitionResult = result;
-    }
+        // 基准水果消失 → TAKE_OUT
+        if (tracked.isBaseline && ratio < kDynamicDisappearRatio) {
+            RecordChangeEvent(tracked.fruitType, FruitChangeAction::TAKE_OUT,
+                              tracked.locationX, tracked.locationY);
+            LOG_PRINT("[CvModel]", "CHANGE: TAKE_OUT type=" << (int)tracked.fruitType
+                      << " ratio=" << ratio << " (<" << kDynamicDisappearRatio << ")");
 
-    // 清理滑动窗口
-    {
-        std::lock_guard<std::mutex> lock(mSlidingWindowMutex);
-        mSlidingWindowResults.clear();
-    }
-
-    LOG_PRINT("[CvModel]", "=== DynamicAggregateResults END ===");
-}
-
-// 保留原 DynamicRecognitionInternal 以兼容旧调用路径（内部直接调用综合逻辑）
-void CvModelManager::DynamicRecognitionInternal() {
-    // 当 StartDynamicSampling 已采集过数据时，直接综合
-    if (mDynamicRecognitionRunning.load() || !mSlidingWindowResults.empty()) {
-        StopDynamicSampling();
-    } else {
-        // 兜底：旧调用路径，单帧推理（退化模式）
-        LOG_PRINT("[CvModel]", "=== DynamicRecognitionInternal (legacy single-frame mode) ===");
-        SetDynamicRecognitionStatus(kRecognitionBusy);
-
-        cv::Mat frame = CameraModule::GetInstance().GetLatestFrame();
-        DynamicRecognitionResult result = {};
-
-        if (!frame.empty() && mInferenceEngine) {
-            std::vector<float> rawOutput;
-            if (mInferenceEngine->Infer(frame, rawOutput)) {
-                auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
-                uint32_t timestamp = static_cast<uint32_t>(
-                    std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-
-                result.fruitCount = std::min(static_cast<uint8_t>(detections.size()), kMaxDynamicFruitCount);
-                for (uint8_t i = 0; i < result.fruitCount; ++i) {
-                    result.fruitInfoWithTimestamp[i].timestamp = timestamp;
-                    result.fruitInfoWithTimestamp[i].fruitInfo = detections[i];
-                }
-            }
+            // 确认后翻转状态：该水果现在不在冰箱中，开始监测是否会被重新放入
+            tracked.isBaseline = false;
+            tracked.alreadyConfirmed = false;
+            tracked.continuousCount = 0;
+            tracked.continuousAbsentCount = 0;
+            tracked.totalAppearCount = 0;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(mDataMutex);
-            mDynamicRecognitionResult = result;
-        }
+        // 非基准水果出现 → PUT_IN
+        if (!tracked.isBaseline && ratio >= kDynamicAppearRatio) {
+            RecordChangeEvent(tracked.fruitType, FruitChangeAction::PUT_IN,
+                              tracked.locationX, tracked.locationY);
+            LOG_PRINT("[CvModel]", "CHANGE: PUT_IN type=" << (int)tracked.fruitType
+                      << " ratio=" << ratio << " (>=" << kDynamicAppearRatio << ")");
 
-        SetDynamicRecognitionSwitch(kRecognitionSwitchOff);
-        SetDynamicRecognitionStatus(kRecognitionIdle);
+            // 确认后翻转状态：该水果现在在冰箱中，开始监测是否会被取走
+            tracked.isBaseline = true;
+            tracked.alreadyConfirmed = false;
+            tracked.continuousCount = 0;
+            tracked.continuousAbsentCount = 0;
+            tracked.totalAppearCount = 0;
+        }
     }
+
+    // 清理：完全消失的非基准水果（误检测）移除追踪列表
+    mTrackedFruits.erase(
+        std::remove_if(mTrackedFruits.begin(), mTrackedFruits.end(),
+            [](const TrackedFruitState& tf) {
+                return !tf.isBaseline && tf.continuousAbsentCount > kDynamicWindowSize * 2;
+            }),
+        mTrackedFruits.end());
 }
 
+// ==================== 记录变化事件 ====================
+void CvModelManager::RecordChangeEvent(FruitType type, FruitChangeAction action, uint8_t x, uint8_t y) {
+    uint32_t now = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::lock_guard<std::mutex> dataLock(mDataMutex);
+
+    if (mDynamicRecognitionResult.eventCount >= kMaxDynamicEventCount) {
+        LOG_PRINT("[CvModel]", "WARNING: event list full, cannot record more events");
+        return;
+    }
+
+    uint8_t idx = mDynamicRecognitionResult.eventCount;
+    mDynamicRecognitionResult.events[idx].fruitType = type;
+    mDynamicRecognitionResult.events[idx].action = action;
+    mDynamicRecognitionResult.events[idx].timestamp = now;
+    mDynamicRecognitionResult.events[idx].locationX = x;
+    mDynamicRecognitionResult.events[idx].locationY = y;
+    mDynamicRecognitionResult.eventCount++;
+
+    LOG_PRINT("[CvModel]", "Event recorded [" << (int)idx << "]: type=" << (int)type
+              << " action=" << (action == FruitChangeAction::PUT_IN ? "PUT_IN" : "TAKE_OUT")
+              << " ts=" << now << " pos=(" << (int)x << "," << (int)y << ")");
+}
+
+// ==================== 工具方法 ====================
+bool CvModelManager::IsFruitSimilar(const FruitInfo& a, const FruitInfo& b) const {
+    if (a.fruitType != b.fruitType) return false;
+    int dx = static_cast<int>(a.locationX) - static_cast<int>(b.locationX);
+    int dy = static_cast<int>(a.locationY) - static_cast<int>(b.locationY);
+    int dist = static_cast<int>(std::sqrt(static_cast<float>(dx * dx + dy * dy)));
+    return dist < kDynamicPositionTolerance;
+}
+
+FruitInfo* CvModelManager::FindTrackedFruit(FruitType type, uint8_t x, uint8_t y) {
+    FruitInfo target{type, x, y, FreshnessLevel::Fresh};
+    for (auto& tracked : mTrackedFruits) {
+        FruitInfo trackedInfo{tracked.fruitType, tracked.locationX, tracked.locationY, FreshnessLevel::Fresh};
+        if (IsFruitSimilar(target, trackedInfo)) {
+            return &trackedInfo;  // 仅用于判断是否存在
+        }
+    }
+    return nullptr;
+}
+
+// ==================== 结果获取 ====================
 StaticRecognitionResult CvModelManager::GetStaticResult() {
     std::lock_guard<std::mutex> lock(mDataMutex);
     return mStaticRecognitionResult;
