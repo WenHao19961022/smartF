@@ -5,6 +5,7 @@
 #include <ctime>
 #include <algorithm>
 #include <atomic>
+#include <map>
 #include "../include/core_log.h"
 #include <config_manager.h>
 #include <string>
@@ -124,12 +125,13 @@ void CoreManager::HandleDoorClose() {
     LOG_INFO("Dynamic recognition completed (waited " << (waitCount * 10) << "ms)");
 
     DynamicRecognitionResult dyn = GetDynamicRecognitionResult();
-    LOG_DATA("Dynamic result: fruitCount=" << (int)dyn.fruitCount);
-    for (uint8_t i = 0; i < dyn.fruitCount; ++i) {
-        LOG_DATA("  DynFruit[" << (int)i << "]: type=" << (int)dyn.fruitInfoWithTimestamp[i].fruitInfo.fruitType
-                 << " | pos=(" << (int)dyn.fruitInfoWithTimestamp[i].fruitInfo.locationX
-                 << "," << (int)dyn.fruitInfoWithTimestamp[i].fruitInfo.locationY << ")"
-                 << " | ts=" << dyn.fruitInfoWithTimestamp[i].timestamp);
+    LOG_DATA("Dynamic result: eventCount=" << (int)dyn.eventCount);
+    for (uint8_t i = 0; i < dyn.eventCount; ++i) {
+        LOG_DATA("  DynEvent[" << (int)i << "]: type=" << (int)dyn.events[i].fruitType
+                 << " | action=" << (dyn.events[i].action == FruitChangeAction::PUT_IN ? "PUT_IN" : "TAKE_OUT")
+                 << " | pos=(" << (int)dyn.events[i].locationX
+                 << "," << (int)dyn.events[i].locationY << ")"
+                 << " | ts=" << dyn.events[i].timestamp);
     }
 
     LOG_INFO("Step 3: StartStaticRecognition");
@@ -167,22 +169,41 @@ void CoreManager::HandleDoorClose() {
     int32_t weightDelta = static_cast<int32_t>(currentWeight) - static_cast<int32_t>(mBaseWeight);
     LOG_DATA("Weight delta: currentWeight=" << currentWeight << "g - baseWeight=" << mBaseWeight << "g = " << weightDelta << "g");
 
-    // 动态对账：从动态 CV 结果推断交互的水果种类（一次只交互一种）
-    if (dyn.fruitCount > 0) {
-        FruitType interactedType = dyn.fruitInfoWithTimestamp[0].fruitInfo.fruitType;
-        int countDelta = 0;
-        if (weightDelta > 0) countDelta = dyn.fruitCount; // 放入
-        else countDelta = -static_cast<int>(dyn.fruitCount); // 取出
+    // 动态对账：遍历每个变化事件，分别处理 PUT_IN / TAKE_OUT
+    if (dyn.eventCount > 0) {
+        // 按水果类型聚合事件（同类型可能有多次PUT_IN/TAKE_OUT）
+        std::map<FruitType, int> typeCountDeltas;
+        for (uint8_t i = 0; i < dyn.eventCount; ++i) {
+            int delta = (dyn.events[i].action == FruitChangeAction::PUT_IN) ? 1 : -1;
+            typeCountDeltas[dyn.events[i].fruitType] += delta;
+        }
 
-        LOG_INFO("Step 5: Dynamic reconciliation | type=" << (int)interactedType
-                 << " | weightDelta=" << weightDelta << "g"
-                 << " | countDelta=" << countDelta
-                 << " | direction=" << (weightDelta > 0 ? "PUT_IN" : "TAKE_OUT"));
+        int totalAbsDelta = 0;
+        for (auto& [type, delta] : typeCountDeltas) {
+            totalAbsDelta += std::abs(delta);
+        }
 
-        // 执行动态对账 (V3.0 逻辑 1) — 传入开门基准时间戳作为 UID 批次
-        mInventoryManager.HandleDynamicEvent(interactedType, weightDelta, countDelta, mDoorOpenTimestamp, static_cast<int32_t>(currentWeight));
+        LOG_INFO("Step 5: Dynamic reconciliation | " << (int)dyn.eventCount << " events"
+                 << " | " << typeCountDeltas.size() << " types affected"
+                 << " | weightDelta=" << weightDelta << "g");
+
+        // 按类型调用 HandleDynamicEvent
+        for (auto& [type, countDelta] : typeCountDeltas) {
+            // 按数量比例分配总重量变化
+            int32_t typeWeightDelta = 0;
+            if (totalAbsDelta > 0) {
+                typeWeightDelta = static_cast<int32_t>(
+                    static_cast<float>(weightDelta) * countDelta / totalAbsDelta);
+            }
+
+            LOG_INFO("  DynamicEvent: type=" << (int)type
+                     << " | countDelta=" << countDelta
+                     << " | typeWeightDelta=" << typeWeightDelta << "g");
+
+            mInventoryManager.HandleDynamicEvent(type, typeWeightDelta, countDelta, mDoorOpenTimestamp, static_cast<int32_t>(currentWeight));
+        }
     } else {
-        LOG_WARN("Dynamic CV saw 0 fruits during door open");
+        LOG_WARN("Dynamic CV saw 0 events during door open");
         if (weightDelta != 0) {
             LOG_WARN("Weight changed (" << weightDelta << "g) but CV saw no dynamic action!");
         }
