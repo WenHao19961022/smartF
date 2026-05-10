@@ -1,51 +1,51 @@
 #include "../include/core_manager.h"
-#include <iostream>
-#include <thread>
-#include <cstdlib>
-#include <ctime>
+#include "../include/core_log.h"
 #include <algorithm>
 #include <atomic>
-#include <map>
-#include "../include/core_log.h"
-#include <config_manager.h>
-#include <string>
+#include <thread>
 
-// 初始化随机数种子
-namespace {
-    struct RandomSeedInitializer {
-        RandomSeedInitializer() {
-            srand(static_cast<unsigned int>(time(nullptr)));
-        }
-    } randomSeedInitializer;
+static std::atomic<uint16_t> gMsgCounter{0};
+
+static void WaitForStaticBusy() {
+    while (IsStaticRecognitionIdle()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 }
 
-// 全局消息序列号（用于构造 32-bit messageId 的低 16 位）
-static std::atomic<uint16_t> gMsgCounter(0);
+static void WaitForStaticIdle() {
+    while (!IsStaticRecognitionIdle()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+static void WaitForDynamicBusy() {
+    while (IsDynamicRecognitionIdle()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+static void WaitForDynamicIdle() {
+    while (!IsDynamicRecognitionIdle()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
 
 void CoreManager::Init() {
-    LOG_START("初始化开始");
+    LOG_INFO("CoreManager 初始化成功");
+}
 
-    // 从配置管理器读取业务参数
-    mDeviceId = static_cast<uint32_t>(ConfigManager::GetInstance().GetInt("device.id", 10001));
-    mStaticInterval = std::chrono::seconds(ConfigManager::GetInstance().GetInt("inventory.static_interval_sec", 7200));
-
-    LOG_INFO("Config: device_id=" << mDeviceId << " static_interval=" << mStaticInterval.count() << "s");
-
-    FrigeratorHistoryInfo initialInfo = GetFrigeratorInfo();
-    mLastDoorState = (initialInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
-    LOG_INFO("Initial door state: " << (mLastDoorState ? "OPEN" : "CLOSED"));
-    mLastStaticTime = std::chrono::steady_clock::now();
-    LOG_WARN("等待 CV 模型就绪...");
-    while (!IsCvModelReady()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    LOG_OK("CV 模型已就绪，Core 接管控制权！");
-    LOG_INFO("Init complete | mDeviceId=" << mDeviceId << " | mStaticInterval=" << mStaticInterval.count() << "s");
+uint32_t CoreManager::GetCurrentTimeMs() {
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
 void CoreManager::Run() {
     LOG_START("进入主循环");
     int loopCount = 0;
+    
+    // 初始化定时器基准时间
+    mLastStaticTime = std::chrono::steady_clock::now();
+
     while (mRunning) {
         loopCount++;
 
@@ -53,27 +53,38 @@ void CoreManager::Run() {
         FrigeratorHistoryInfo currInfo = GetFrigeratorInfo();
         bool currentDoorState = (currInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
 
-        if (currentDoorState != mLastDoorState) {               // 门状态变化，触发对应事件
+        // [V5.0 逻辑] 门开期间：高频收集重量流
+        if (currentDoorState) {
+            uint32_t nowMs = GetCurrentTimeMs();
+            uint16_t currWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
+            if (mWeightStream.empty() || mWeightStream.back().weight != currWeight || (nowMs - mWeightStream.back().timestampMs > 50)) {
+                mWeightStream.push_back({nowMs, currWeight});
+            }
+        }
+
+        // [原始+V5.0逻辑] 门状态突变触发
+        if (currentDoorState != mLastDoorState) {
             LOG_INFO(std::string("门状态突变触发: ") + (currentDoorState ? "关->开" : "开->关"));
-            if (currentDoorState == true) {                       // 开门事件
-                // 记录开门瞬间的重量作为基准
-                mBaseWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
+            if (currentDoorState == true) {
+                // 记录基准重量的逻辑已移入 HandleDoorOpen 以保证与流收集严格对齐
                 HandleDoorOpen();
             } else {
-                HandleDoorClose();                                  // 关门事件
+                HandleDoorClose();
             }
             mLastDoorState = currentDoorState;
         }
 
+        // 定时静态检测完成后的处理
         if (mIsStaticWaiting && IsStaticRecognitionIdle() && !currentDoorState) {
             ProcessStaticResultOnly();
         }
 
+        // 触发定时静态检测
         if (!currentDoorState && !mIsStaticWaiting) {
             CheckTimers();
         }
 
-        // 每100次循环打印一次心跳日志
+        // [恢复原始逻辑] 每100次循环打印一次心跳日志
         if (loopCount % 100 == 0) {
             LOG_INFO("[Core Run] heartbeat #" << loopCount
                      << " | door=" << (currentDoorState ? "OPEN" : "CLOSED")
@@ -90,136 +101,133 @@ void CoreManager::Run() {
 
 void CoreManager::HandleDoorOpen() {
     LOG_START("处理开门逻辑");
-    mIsStaticWaiting = false;
-    // 记录开门瞬间时间戳（秒）作为本次批次基准
+    
+    // =========================================================================
+    // 【极其关键的防并发锁】
+    // 如果用户开门时，后台正好在跑定时静态检测，必须强制等待其结束！
+    // 否则同时 StartDynamicRecognition 会导致模型冲突或显存 OOM。
+    // =========================================================================
+    if (!IsStaticRecognitionIdle()) {
+        LOG_WARN("开门动作与定时检测冲突：正在强制结束静态检测...");
+        StopStaticRecognition();
+        WaitForStaticIdle();
+    }
+    // 无论如何，既然开门了，就放弃那次定时的后续处理逻辑，以这次开门的动态对账为准
+    mIsStaticWaiting = false; 
+
+    // 生成批次UID时间戳
     mDoorOpenTimestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                              std::chrono::system_clock::now().time_since_epoch()).count());
+    
+    // 清空旧流，压入绝对物理基座
+    mWeightStream.clear();
     mBaseWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
-    LOG_DATA(std::string("开门瞬间抓取基准重量: ") + std::to_string(mBaseWeight) + "g, 时间戳: " + std::to_string(mDoorOpenTimestamp));
+    mWeightStream.push_back({GetCurrentTimeMs(), mBaseWeight});
+    
+    LOG_DATA(std::string("开门瞬间抓取基座: ") + std::to_string(mBaseWeight) + "g");
+    
+    // 此时静态必定Idle，可以安全启动动态
     StartDynamicRecognition();
-    LOG_OK("HandleDoorOpen() - 执行完毕");
+    WaitForDynamicBusy();
+    LOG_INFO("动态识别已启动并进入忙碌状态");
+}
+
+// V5.0: 滑动窗口算法，抵抗手扶隔板的高频噪声
+int32_t CoreManager::CalculateLocalDeltaW(uint32_t startTsMs, uint32_t endTsMs) {
+    if (mWeightStream.empty()) return 0;
+    const int kVarianceThreshold = 15; // 稳态允许的最大波动(15g)
+
+    // 1. 向历史回溯，寻找动作发生前的稳态 (窗口大小: 3个采样点)
+    uint16_t weightBefore = mBaseWeight;
+    for (int i = static_cast<int>(mWeightStream.size()) - 3; i >= 0; --i) {
+        if (mWeightStream[i+2].timestampMs <= startTsMs) {
+            int w1 = mWeightStream[i].weight;
+            int w2 = mWeightStream[i+1].weight;
+            int w3 = mWeightStream[i+2].weight;
+            if (std::max({w1, w2, w3}) - std::min({w1, w2, w3}) <= kVarianceThreshold) {
+                weightBefore = (w1 + w2 + w3) / 3;
+                break;
+            }
+        }
+    }
+
+    // 2. 向未来探索，寻找动作完成后的稳态
+    uint16_t weightAfter = mWeightStream.back().weight;
+    for (size_t i = 0; i + 2 < mWeightStream.size(); ++i) {
+        if (mWeightStream[i].timestampMs >= endTsMs) {
+            int w1 = mWeightStream[i].weight;
+            int w2 = mWeightStream[i+1].weight;
+            int w3 = mWeightStream[i+2].weight;
+            if (std::max({w1, w2, w3}) - std::min({w1, w2, w3}) <= kVarianceThreshold) {
+                weightAfter = (w1 + w2 + w3) / 3;
+                break;
+            }
+        }
+    }
+
+    return static_cast<int32_t>(weightAfter) - static_cast<int32_t>(weightBefore);
 }
 
 void CoreManager::HandleDoorClose() {
-    LOG_START("处理关门逻辑 (启动动态对账)");
+    LOG_START("处理关门逻辑 (启动V5.0全链路对账)");
     auto handleStart = std::chrono::steady_clock::now();
-    const int kMaxWaitMs = 30000; // 最大等待30秒
 
-    LOG_INFO("Step 1: StopDynamicRecognition");
     StopDynamicRecognition();
-
-    LOG_INFO("Step 2: Waiting for dynamic recognition to complete...");
-    int waitCount = 0;
-    while (!IsDynamicRecognitionIdle()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        waitCount++;
-        if (waitCount % 100 == 0) {
-            LOG_WARN("Waiting for dynamic recognition... (" << (waitCount * 10) << "ms)");
-        }
-        // 超时检测：防止永久阻塞
-        if (waitCount * 10 >= kMaxWaitMs) {
-            LOG_ERR("Dynamic recognition timeout after " << kMaxWaitMs << "ms! Proceeding with empty result.");
-            break;
-        }
-    }
-    LOG_INFO("Dynamic recognition completed (waited " << (waitCount * 10) << "ms)");
-
+    WaitForDynamicIdle();
     DynamicRecognitionResult dyn = GetDynamicRecognitionResult();
-    LOG_DATA("Dynamic result: eventCount=" << (int)dyn.eventCount);
-    for (uint8_t i = 0; i < dyn.eventCount; ++i) {
-        LOG_DATA("  DynEvent[" << (int)i << "]: type=" << (int)dyn.events[i].fruitType
-                 << " | action=" << (dyn.events[i].action == FruitChangeAction::PUT_IN ? "PUT_IN" : "TAKE_OUT")
-                 << " | pos=(" << (int)dyn.events[i].locationX
-                 << "," << (int)dyn.events[i].locationY << ")"
-                 << " | ts=" << dyn.events[i].timestamp);
-    }
 
-    LOG_INFO("Step 3: StartStaticRecognition");
     StartStaticRecognition();
-
-    LOG_INFO("Step 4: Waiting for static recognition to complete...");
-    waitCount = 0;
-    while (!IsStaticRecognitionIdle()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        waitCount++;
-        if (waitCount % 100 == 0) {
-            LOG_WARN("Waiting for static recognition... (" << (waitCount * 10) << "ms)");
-        }
-        // 超时检测：静态识别需要多次拍照，给更多时间
-        if (waitCount * 10 >= kMaxWaitMs) {
-            LOG_ERR("Static recognition timeout after " << kMaxWaitMs << "ms! Proceeding with current result.");
-            break;
-        }
-    }
-    LOG_INFO("Static recognition completed (waited " << (waitCount * 10) << "ms)");
-
+    WaitForStaticBusy();
+    WaitForStaticIdle();
     StaticRecognitionResult stat = GetStaticRecognitionResult();
-    LOG_DATA("Static result: fruitCount=" << (int)stat.fruitCount << " | timestamp=" << stat.timestamp);
-    for (uint8_t i = 0; i < stat.fruitCount; ++i) {
-        LOG_DATA("  StatFruit[" << (int)i << "]: type=" << (int)stat.fruits[i].fruitType
-                 << " | pos=(" << (int)stat.fruits[i].locationX << "," << (int)stat.fruits[i].locationY << ")"
-                 << " | freshness=" << (int)stat.fruits[i].freshness);
-    }
 
-    // 关门后获取完整的历史重量过程
-    FrigeratorHistoryInfo history = GetFrigeratorInfo();
-    uint16_t currentWeight = history.weight[kFridgeHistoryInfoSize - 1];
+    uint16_t finalStableWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
 
-    // 计算净重跳变（相对于开门时的基准）
-    int32_t weightDelta = static_cast<int32_t>(currentWeight) - static_cast<int32_t>(mBaseWeight);
-    LOG_DATA("Weight delta: currentWeight=" << currentWeight << "g - baseWeight=" << mBaseWeight << "g = " << weightDelta << "g");
+    std::map<FruitType, int32_t> draftWeightDelta;
+    std::map<FruitType, int32_t> dynCountDelta;
 
-    // 动态对账：遍历每个变化事件，分别处理 PUT_IN / TAKE_OUT
+    // V5.0: 动作聚类引擎 (防止并发抓取的双重扣费)
     if (dyn.eventCount > 0) {
-        // 按水果类型聚合事件（同类型可能有多次PUT_IN/TAKE_OUT）
-        std::map<FruitType, int> typeCountDeltas;
-        for (uint8_t i = 0; i < dyn.eventCount; ++i) {
-            int delta = (dyn.events[i].action == FruitChangeAction::PUT_IN) ? 1 : -1;
-            typeCountDeltas[dyn.events[i].fruitType] += delta;
-        }
+        std::vector<FruitChangeEvent> events(dyn.events, dyn.events + dyn.eventCount);
+        std::sort(events.begin(), events.end(), [](const auto& a, const auto& b) {
+            return a.timestamp < b.timestamp;
+        });
 
-        int totalAbsDelta = 0;
-        for (auto& [type, delta] : typeCountDeltas) {
-            totalAbsDelta += std::abs(delta);
-        }
-
-        LOG_INFO("Step 5: Dynamic reconciliation | " << (int)dyn.eventCount << " events"
-                 << " | " << typeCountDeltas.size() << " types affected"
-                 << " | weightDelta=" << weightDelta << "g");
-
-        // 按类型调用 HandleDynamicEvent
-        for (auto& [type, countDelta] : typeCountDeltas) {
-            // 按数量比例分配总重量变化
-            int32_t typeWeightDelta = 0;
-            if (totalAbsDelta > 0) {
-                typeWeightDelta = static_cast<int32_t>(
-                    static_cast<float>(weightDelta) * countDelta / totalAbsDelta);
+        // 将间隔小于 800ms 的动作聚类为同一组
+        std::vector<std::vector<FruitChangeEvent>> clusters;
+        for (const auto& ev : events) {
+            if (clusters.empty() || (ev.timestamp - clusters.back().back().timestamp > 800)) {
+                clusters.push_back({ev});
+            } else {
+                clusters.back().push_back(ev);
             }
-
-            LOG_INFO("  DynamicEvent: type=" << (int)type
-                     << " | countDelta=" << countDelta
-                     << " | typeWeightDelta=" << typeWeightDelta << "g");
-
-            mInventoryManager.HandleDynamicEvent(type, typeWeightDelta, countDelta, mDoorOpenTimestamp, static_cast<int32_t>(currentWeight));
         }
-    } else {
-        LOG_WARN("Dynamic CV saw 0 events during door open");
-        if (weightDelta != 0) {
-            LOG_WARN("Weight changed (" << weightDelta << "g) but CV saw no dynamic action!");
+
+        // 处理物理聚类
+        for (const auto& cluster : clusters) {
+            uint32_t startTs = cluster.front().timestamp;
+            uint32_t endTs = cluster.back().timestamp;
+
+            int32_t clusterDeltaW = CalculateLocalDeltaW(startTs, endTs);
+            int direction = (clusterDeltaW > 5) ? 1 : ((clusterDeltaW < -5) ? -1 : 0);
+            int32_t avgDeltaW = clusterDeltaW / static_cast<int32_t>(cluster.size());
+
+            for (const auto& ev : cluster) {
+                draftWeightDelta[ev.fruitType] += avgDeltaW;
+                dynCountDelta[ev.fruitType] += direction;
+            }
         }
     }
 
-    // 执行静态对账 (V3.0 逻辑 2) — 传入开门基准时间戳用于 UID 生成
-    LOG_INFO("Step 6: Static reconciliation (doorOpenTs=" << mDoorOpenTimestamp << ")");
-    mInventoryManager.HandleStaticEvent(stat, mDoorOpenTimestamp);
+    // 调用 V5.0 终极对账大脑
+    mInventoryManager.Reconcile(draftWeightDelta, dynCountDelta, stat, finalStableWeight, mDoorOpenTimestamp);
 
-    // 生成 MQTT 报文 (V3.0 逻辑 3)
-    LOG_INFO("Step 7: Building MQTT message");
+    // ================== MQTT 组装与上报 ==================
     std::map<FruitType, int32_t> avgWeights;
-    std::vector<TrackedFruit> flattened = mInventoryManager.GetFlattenedStock(avgWeights);
-
+    std::vector<TrackedFruit> flatStock = mInventoryManager.GetFlattenedStock(avgWeights);
+    
     MqttMessageStruct msg;
-    // 1. 生成时间戳和必填信息
+    // 生成时间戳和必填信息
     uint32_t timestamp = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count());
 
@@ -229,20 +237,21 @@ void CoreManager::HandleDoorClose() {
     msg.messageId = ((timestamp & 0xFFFFu) << 16) | seq;
     msg.deviceId = mDeviceId;
 
-    // 填充底层硬件状态 (从 history 中获取)
-    msg.fridgeInfo.temperature = history.temperature[kFridgeHistoryInfoSize - 1];
-    msg.fridgeInfo.humidity = history.humidity[kFridgeHistoryInfoSize - 1];
+    // 获取当前冰箱状态
+    FrigeratorHistoryInfo currFridgeState = GetFrigeratorInfo();
+    msg.fridgeInfo.temperature = currFridgeState.temperature[kFridgeHistoryInfoSize - 1];
+    msg.fridgeInfo.humidity = currFridgeState.humidity[kFridgeHistoryInfoSize - 1];
     msg.fridgeInfo.doorStatus = DoorStatus::DoorClosed;
-    msg.fridgeInfo.weight = history.weight[kFridgeHistoryInfoSize - 1];
+    msg.fridgeInfo.weight = currFridgeState.weight[kFridgeHistoryInfoSize - 1];
 
-    size_t fillCount = std::min((size_t)kMaxStaticFruitCount, flattened.size());
+    size_t fillCount = std::min((size_t)kMaxStaticFruitCount, flatStock.size());
     msg.fruitCount = static_cast<uint8_t>(fillCount);
     for (size_t i = 0; i < fillCount; ++i) {
-        msg.fruits[i].id = flattened[i].id;
-        msg.fruits[i].type = flattened[i].type;
-        msg.fruits[i].freshness = flattened[i].freshness;
+        msg.fruits[i].id = flatStock[i].id;
+        msg.fruits[i].type = flatStock[i].type;
+        msg.fruits[i].freshness = static_cast<FreshnessLevel>(flatStock[i].freshness);
         int32_t avgW = 0;
-        auto it = avgWeights.find(flattened[i].type);
+        auto it = avgWeights.find(flatStock[i].type);
         if (it != avgWeights.end()) avgW = it->second;
         msg.fruits[i].weight = (avgW > 0) ? static_cast<uint32_t>(avgW) : 0;
     }
@@ -254,7 +263,6 @@ void CoreManager::HandleDoorClose() {
              << " | humidity=" << (msg.fridgeInfo.humidity / 10.0) << "%"
              << " | weight=" << msg.fridgeInfo.weight << "g");
 
-    LOG_INFO("Step 8: Sending MQTT message...");
     bool sendResult = SendMqttMessage(msg);
     LOG_INFO("SendMqttMessage result: " << (sendResult ? "SUCCESS" : "FAILED"));
 
@@ -269,17 +277,23 @@ void CoreManager::HandleDoorClose() {
     for (auto const& [t, w] : avgWeights) {
         LOG_INFO(std::string("Avg Weight Type ") + std::to_string((int)t) + ": " + std::to_string(w) + "g");
     }
-    LOG_OK("动态对账流水写入并已发送 MQTT 报文");
+
+    LOG_OK("关门结算流水线执行完毕并已发送 MQTT 上报");
 }
 
 void CoreManager::CheckTimers() {
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::seconds>(now - mLastStaticTime) >= mStaticInterval) {
-        LOG_START("触发2小时定时静态盘点");
+    // 假设 mStaticInterval 在头文件中定义 (例如 std::chrono::seconds mStaticInterval{7200})
+    if (now - mLastStaticTime > mStaticInterval) {
+        LOG_INFO("定时器触发：启动静态检测更新新鲜度");
+
+        // 先等待动态完全空闲，避免互斥冲突
+        WaitForDynamicIdle();
+
         StartStaticRecognition();
+        WaitForStaticBusy();
         mIsStaticWaiting = true;
         mLastStaticTime = now;
-        LOG_OK("定时拍照指令已下发");
     }
 }
 
@@ -322,7 +336,7 @@ void CoreManager::ProcessStaticResultOnly() {
     for (size_t i = 0; i < fillCount; ++i) {
         mqttMsg.fruits[i].id = flattened[i].id;
         mqttMsg.fruits[i].type = flattened[i].type;
-        mqttMsg.fruits[i].freshness = flattened[i].freshness;
+        mqttMsg.fruits[i].freshness = static_cast<FreshnessLevel>(flattened[i].freshness);
         int32_t avgW = 0;
         auto it = avgWeights.find(flattened[i].type);
         if (it != avgWeights.end()) avgW = it->second;
