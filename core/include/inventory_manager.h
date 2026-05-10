@@ -5,32 +5,38 @@
 #include <string>
 #include <map>
 #include <cstdint>
-#include <algorithm>
-#include "./external_apis.h"
+#include "./external_apis.h" // 包含水果类型等定义
 
-// ==================== 结构体 ====================
 struct TrackedFruit {
-    uint16_t id = 0;
-    std::string uid;
+    uint16_t id;
     FruitType type;
-    FreshnessLevel freshness;
+    std::string uid;
     uint32_t putInTimestamp;
-    uint8_t locationX;
-    uint8_t locationY;
+    uint8_t freshness;
+    uint16_t locationX;
+    uint16_t locationY;
 };
 
 struct CategoryStock {
-    int32_t totalWeight = 0;
     std::vector<TrackedFruit> fruits;
+    int32_t totalWeight = 0;
 };
 
-// ==================== 库存管理类 ====================
 class InventoryManager {
 public:
     InventoryManager() = default;
 
-    void HandleDynamicEvent(FruitType type, int32_t weightDelta, int countDelta, uint32_t timestamp, int32_t realTotalWeight);
-    void HandleStaticEvent(const StaticRecognitionResult& staticRes, uint32_t doorOpenTs);
+    // V5.0 终极对账引擎接口
+    void Reconcile(
+        const std::map<FruitType, int32_t>& draftWeightDelta, 
+        const std::map<FruitType, int32_t>& dynCountDelta, 
+        const StaticRecognitionResult& statRes, 
+        int32_t finalStableWeight, 
+        uint32_t batchTs
+    );
+
+    void HandleStaticEvent(const StaticRecognitionResult& statRes, uint32_t batchTs);
+
     std::vector<TrackedFruit> GetFlattenedStock(std::map<FruitType, int32_t>& avgWeights);
     int32_t GetBookTotalWeight();
     uint16_t GetNextId() { return ++mNextFruitId; }
