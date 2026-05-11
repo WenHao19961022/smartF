@@ -244,7 +244,7 @@ void CoreManager::HandleDoorOpen() {
         LOG_WARN("开门动作与定时检测冲突：正在强制结束静态检测...");
         bool stopped = StopStaticRecognitionWithTimeout(std::chrono::milliseconds(500));
         if (!stopped) {
-            LOG_ERROR("无法停止静态识别：放弃启动动态识别以避免资源冲突和 OOM");
+            LOG_ERR("无法停止静态识别：放弃启动动态识别以避免资源冲突和 OOM");
             mIsStaticWaiting = false;
             return; // 直接返回，避免启动动态导致模型冲突
         }
@@ -265,7 +265,7 @@ void CoreManager::HandleDoorOpen() {
     
     // 再次确认静态确实处于空闲，若仍未空闲则放弃启动动态以避免模型冲突
     if (!IsStaticRecognitionIdle()) {
-        LOG_ERROR("静态识别仍未空闲，放弃启动动态识别以避免资源冲突和 OOM");
+        LOG_ERR("静态识别仍未空闲，放弃启动动态识别以避免资源冲突和 OOM");
     } else {
         if (!StartDynamicRecognitionWithRetry(3, std::chrono::milliseconds(300), std::chrono::milliseconds(200))) {
             LOG_WARN("启动动态识别失败或等待 busy 超时");
