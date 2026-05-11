@@ -12,7 +12,7 @@ static const char* LevelPrefix(LogLevel l) {
     }
 }
 
-void CoreLog(LogLevel level, const std::string &msg, const char* file, int line, const char* func) {
+void CoreLog(LogLevel level, const std::string &msg, [[maybe_unused]] const char* file, [[maybe_unused]] int line, const char* func) {
     std::ostringstream oss;
     oss << LevelPrefix(level) << " " << func << "() - " << msg;
     LogPrint("[Core]", oss.str());

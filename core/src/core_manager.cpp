@@ -11,7 +11,7 @@ static bool WaitForStaticBusyTimeout(std::chrono::milliseconds timeout) {
     auto start = std::chrono::steady_clock::now();
     while (IsStaticRecognitionIdle()) {
         if (std::chrono::steady_clock::now() - start > timeout) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     return true;
 }
@@ -29,7 +29,7 @@ static bool WaitForDynamicBusyTimeout(std::chrono::milliseconds timeout) {
     auto start = std::chrono::steady_clock::now();
     while (IsDynamicRecognitionIdle()) {
         if (std::chrono::steady_clock::now() - start > timeout) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     return true;
 }
@@ -444,13 +444,10 @@ void CoreManager::CheckTimers() {
         }
 
         bool started = StartStaticRecognitionWithRetry(3, std::chrono::milliseconds(300), std::chrono::milliseconds(200));
-        if (started) {
+        if (started) 
+        {
             // 若已经处于 idle，说明结果可能已准备好；否则标记为等待处理中
-            if (IsStaticRecognitionIdle()) {
-                mIsStaticWaiting = false;
-            } else {
-                mIsStaticWaiting = true;
-            }
+            mIsStaticWaiting = true;
             mLastStaticTime = now;
         } else {
             LOG_WARN("定时静态检测启动失败，稍后重试");
@@ -459,7 +456,7 @@ void CoreManager::CheckTimers() {
 }
 
 void CoreManager::ProcessStaticResultOnly() {
-    LOG_START("收到静态照片，开始终极对账");
+    LOG_START("处理定时静态检测结果");
     mIsStaticWaiting = false;
     StaticRecognitionResult stat = GetStaticRecognitionResult();
 
@@ -470,8 +467,8 @@ void CoreManager::ProcessStaticResultOnly() {
                  << " | freshness=" << (int)stat.fruits[i].freshness);
     }
 
-    // 直接用静态结果做对账并上报（使用上一次开门时间戳作为批次UID）
-    mInventoryManager.HandleStaticEvent(stat, mDoorOpenTimestamp);
+    // 调用 InventoryManager 仅刷新属性（使用上一次开门时间戳作为批次UID）
+    mInventoryManager.UpdateStaticProperties(stat);
 
     FrigeratorHistoryInfo currHistory = GetFrigeratorInfo();
     uint16_t currWeight = currHistory.weight[kFridgeHistoryInfoSize - 1];
