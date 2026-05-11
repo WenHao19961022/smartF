@@ -35,7 +35,9 @@ public:
         uint32_t batchTs
     );
 
-    void HandleStaticEvent(const StaticRecognitionResult& statRes, uint32_t batchTs);
+ 
+    // [新增] 用于定时静态检测，仅更新新鲜度和坐标，不影响数量和重量
+    void UpdateStaticProperties(const StaticRecognitionResult& statRes);
 
     std::vector<TrackedFruit> GetFlattenedStock(std::map<FruitType, int32_t>& avgWeights);
     int32_t GetBookTotalWeight();
