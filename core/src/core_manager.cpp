@@ -6,28 +6,161 @@
 
 static std::atomic<uint16_t> gMsgCounter{0};
 
-static void WaitForStaticBusy() {
+// 带超时的等待函数，避免主线程无限死等
+static bool WaitForStaticBusyTimeout(std::chrono::milliseconds timeout) {
+    auto start = std::chrono::steady_clock::now();
     while (IsStaticRecognitionIdle()) {
+        if (std::chrono::steady_clock::now() - start > timeout) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    return true;
 }
 
-static void WaitForStaticIdle() {
+static bool WaitForStaticIdleTimeout(std::chrono::milliseconds timeout) {
+    auto start = std::chrono::steady_clock::now();
     while (!IsStaticRecognitionIdle()) {
+        if (std::chrono::steady_clock::now() - start > timeout) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    return true;
 }
 
-static void WaitForDynamicBusy() {
+static bool WaitForDynamicBusyTimeout(std::chrono::milliseconds timeout) {
+    auto start = std::chrono::steady_clock::now();
     while (IsDynamicRecognitionIdle()) {
+        if (std::chrono::steady_clock::now() - start > timeout) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    return true;
 }
 
-static void WaitForDynamicIdle() {
+static bool WaitForDynamicIdleTimeout(std::chrono::milliseconds timeout) {
+    auto start = std::chrono::steady_clock::now();
     while (!IsDynamicRecognitionIdle()) {
+        if (std::chrono::steady_clock::now() - start > timeout) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    return true;
+}
+
+// 启动静态检测并带超时/重试策略：
+// - maxRetries: 最大重试次数
+// - busyTimeout: 启动后等待变为 BUSY 的超时
+// - idleTimeout: BUSY 之后等待完成（变为 IDLE）的超时
+// 返回 true 表示最终看到静态检测已完成或已有新结果可用
+static bool StartStaticRecognitionWithRetry(int maxRetries = 3,
+                                           std::chrono::milliseconds busyTimeout = std::chrono::milliseconds(300),
+                                           std::chrono::milliseconds backoff = std::chrono::milliseconds(200)) {
+    int attempt = 0;
+    // 记录启动前的静态结果时间戳/计数用于判断是否已有输出
+    StaticRecognitionResult prev = GetStaticRecognitionResult();
+    uint32_t prevTs = prev.timestamp;
+
+    for (; attempt < maxRetries; ++attempt) {
+        // 在启动前再确认动态是否空闲（短超时），以尽量避免资源冲突
+        WaitForDynamicIdleTimeout(std::chrono::milliseconds(300));
+
+        // 记录请求发出时刻，避免把早期旧结果误判为本次结果
+        uint32_t reqTs = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+                          std::chrono::system_clock::now().time_since_epoch()).count());
+        StartStaticRecognition();
+
+        // 等待 static 进入 busy 状态
+        if (WaitForStaticBusyTimeout(busyTimeout)) {
+            // 已观察到 busy，认为启动成功
+            return true;
+        } else {
+            // 没有观察到 busy，检查结果是否是本次请求产生（timestamp >= reqTs）
+            StaticRecognitionResult now = GetStaticRecognitionResult();
+            if (now.timestamp >= reqTs) {
+                return true;
+            }
+        }
+
+        // 如果到这里说明本次尝试未能确认开始，先确认两端空闲再重试
+        if (IsStaticRecognitionIdle() && IsDynamicRecognitionIdle()) {
+            std::this_thread::sleep_for(backoff + std::chrono::milliseconds(100 * attempt));
+            prevTs = GetStaticRecognitionResult().timestamp;
+            continue;
+        } else {
+            // 若有一端仍然忙，等一小段时间再做下一次尝试
+            std::this_thread::sleep_for(backoff);
+        }
+    }
+
+    // 全部尝试失败，记录并返回 false
+    LOG_WARN(std::string("StartStaticRecognitionWithRetry failed after ") + std::to_string(attempt) + " attempts");
+    return false;
+}
+
+// 启动动态检测后等待 busy 的简化实现（带超时，不重试）
+static bool StartDynamicAndWaitBusy(std::chrono::milliseconds busyTimeout = std::chrono::milliseconds(300)) {
+    StartDynamicRecognition();
+    return WaitForDynamicBusyTimeout(busyTimeout);
+}
+
+// 启动静态检测后等待 busy 的简化实现（带超时，不重试，与动态对称）
+static bool StartStaticAndWaitBusy(std::chrono::milliseconds busyTimeout = std::chrono::milliseconds(300)) {
+    StartStaticRecognition();
+    return WaitForStaticBusyTimeout(busyTimeout);
+}
+
+// 启动动态识别并带重试/退避（与静态的策略对称）
+static bool StartDynamicRecognitionWithRetry(int maxRetries = 3,
+                                           std::chrono::milliseconds busyTimeout = std::chrono::milliseconds(300),
+                                           std::chrono::milliseconds backoff = std::chrono::milliseconds(200)) {
+    int attempt = 0;
+    // 记录启动前的动态结果计数，用于判断是否已有输出
+    DynamicRecognitionResult prev = GetDynamicRecognitionResult();
+    uint8_t prevCount = prev.eventCount;
+
+    for (; attempt < maxRetries; ++attempt) {
+        // 在启动前确认静态是否空闲（短超时），尽量避免模型互斥
+        WaitForStaticIdleTimeout(std::chrono::milliseconds(300));
+
+        StartDynamicRecognition();
+
+        // 等待 dynamic 进入 busy 状态
+        if (WaitForDynamicBusyTimeout(busyTimeout)) {
+            return true;
+        } else {
+            // 没有观察到 busy，检查事件计数是否发生变化（认为有结果产生）
+            DynamicRecognitionResult now = GetDynamicRecognitionResult();
+            if (now.eventCount != prevCount) {
+                return true;
+            }
+        }
+
+        if (IsDynamicRecognitionIdle() && IsStaticRecognitionIdle()) {
+            std::this_thread::sleep_for(backoff + std::chrono::milliseconds(100 * attempt));
+            prevCount = GetDynamicRecognitionResult().eventCount;
+            continue;
+        } else {
+            std::this_thread::sleep_for(backoff);
+        }
+    }
+
+    LOG_WARN(std::string("StartDynamicRecognitionWithRetry failed after ") + std::to_string(attempt) + " attempts");
+    return false;
+}
+
+// 带超时的停止函数：发出 Stop 请求并等待对应识别进入 idle（带超时）
+static bool StopStaticRecognitionWithTimeout(std::chrono::milliseconds timeout = std::chrono::milliseconds(500)) {
+    StopStaticRecognition();
+    if (!WaitForStaticIdleTimeout(timeout)) {
+        LOG_WARN(std::string("StopStaticRecognitionWithTimeout: 等待静态空闲超时 (") + std::to_string(timeout.count()) + "ms)");
+        return false;
+    }
+    return true;
+}
+
+static bool StopDynamicRecognitionWithTimeout(std::chrono::milliseconds timeout = std::chrono::milliseconds(500)) {
+    StopDynamicRecognition();
+    if (!WaitForDynamicIdleTimeout(timeout)) {
+        LOG_WARN(std::string("StopDynamicRecognitionWithTimeout: 等待动态空闲超时 (") + std::to_string(timeout.count()) + "ms)");
+        return false;
+    }
+    return true;
 }
 
 void CoreManager::Init() {
@@ -109,8 +242,12 @@ void CoreManager::HandleDoorOpen() {
     // =========================================================================
     if (!IsStaticRecognitionIdle()) {
         LOG_WARN("开门动作与定时检测冲突：正在强制结束静态检测...");
-        StopStaticRecognition();
-        WaitForStaticIdle();
+        bool stopped = StopStaticRecognitionWithTimeout(std::chrono::milliseconds(500));
+        if (!stopped) {
+            LOG_ERROR("无法停止静态识别：放弃启动动态识别以避免资源冲突和 OOM");
+            mIsStaticWaiting = false;
+            return; // 直接返回，避免启动动态导致模型冲突
+        }
     }
     // 无论如何，既然开门了，就放弃那次定时的后续处理逻辑，以这次开门的动态对账为准
     mIsStaticWaiting = false; 
@@ -126,10 +263,16 @@ void CoreManager::HandleDoorOpen() {
     
     LOG_DATA(std::string("开门瞬间抓取基座: ") + std::to_string(mBaseWeight) + "g");
     
-    // 此时静态必定Idle，可以安全启动动态
-    StartDynamicRecognition();
-    WaitForDynamicBusy();
-    LOG_INFO("动态识别已启动并进入忙碌状态");
+    // 再次确认静态确实处于空闲，若仍未空闲则放弃启动动态以避免模型冲突
+    if (!IsStaticRecognitionIdle()) {
+        LOG_ERROR("静态识别仍未空闲，放弃启动动态识别以避免资源冲突和 OOM");
+    } else {
+        if (!StartDynamicRecognitionWithRetry(3, std::chrono::milliseconds(300), std::chrono::milliseconds(200))) {
+            LOG_WARN("启动动态识别失败或等待 busy 超时");
+        } else {
+            LOG_INFO("动态识别已启动并进入忙碌状态");
+        }
+    }
 }
 
 // V5.0: 滑动窗口算法，抵抗手扶隔板的高频噪声
@@ -172,13 +315,21 @@ void CoreManager::HandleDoorClose() {
     LOG_START("处理关门逻辑 (启动V5.0全链路对账)");
     auto handleStart = std::chrono::steady_clock::now();
 
-    StopDynamicRecognition();
-    WaitForDynamicIdle();
+    if (!StopDynamicRecognitionWithTimeout(std::chrono::milliseconds(500))) {
+        LOG_WARN("强制停止动态识别超时 (500ms)，继续后续流程以避免阻塞");
+    }
     DynamicRecognitionResult dyn = GetDynamicRecognitionResult();
 
-    StartStaticRecognition();
-    WaitForStaticBusy();
-    WaitForStaticIdle();
+    // 启动静态检测并等待 busy，然后再等待 idle 完成（含重试）。
+    bool started = StartStaticRecognitionWithRetry(3, std::chrono::milliseconds(300), std::chrono::milliseconds(200));
+    if (started) {
+        // 若检测正在运行（非空闲），等待其完成（500ms 足够）
+        if (!WaitForStaticIdleTimeout(std::chrono::milliseconds(500))) {
+            LOG_WARN("等待静态识别完成超时 (500ms)");
+        }
+    } else {
+        LOG_WARN("静态检测启动未成功，继续使用可能已存在的静态结果");
+    }
     StaticRecognitionResult stat = GetStaticRecognitionResult();
 
     uint16_t finalStableWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
@@ -287,13 +438,23 @@ void CoreManager::CheckTimers() {
     if (now - mLastStaticTime > mStaticInterval) {
         LOG_INFO("定时器触发：启动静态检测更新新鲜度");
 
-        // 先等待动态完全空闲，避免互斥冲突
-        WaitForDynamicIdle();
+        // 先等待动态完全空闲，避免互斥冲突（带超时以防丢失信号）
+        if (!WaitForDynamicIdleTimeout(std::chrono::milliseconds(500))) {
+            LOG_WARN("等待动态空闲超时 (500ms)，仍尝试启动静态检测");
+        }
 
-        StartStaticRecognition();
-        WaitForStaticBusy();
-        mIsStaticWaiting = true;
-        mLastStaticTime = now;
+        bool started = StartStaticRecognitionWithRetry(3, std::chrono::milliseconds(300), std::chrono::milliseconds(200));
+        if (started) {
+            // 若已经处于 idle，说明结果可能已准备好；否则标记为等待处理中
+            if (IsStaticRecognitionIdle()) {
+                mIsStaticWaiting = false;
+            } else {
+                mIsStaticWaiting = true;
+            }
+            mLastStaticTime = now;
+        } else {
+            LOG_WARN("定时静态检测启动失败，稍后重试");
+        }
     }
 }
 
