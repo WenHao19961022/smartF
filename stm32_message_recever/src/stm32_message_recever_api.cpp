@@ -9,8 +9,8 @@ FrigeratorHistoryInfo GetFrigeratorInfo()
     FrigeratorHistoryInfo info = MessageReceverManager::GetInstance().GetFrigeratorHistoryInfo();
     LOG_PRINT("[Stm32]", "GetFrigeratorInfo called | ready="
               << MessageReceverManager::GetInstance().IsReady()
-              << " | latest temp=" << (info.temperature[kFridgeHistoryInfoSize - 1] / 10.0) << "C"
-              << " | humidity=" << (info.humidity[kFridgeHistoryInfoSize - 1] / 10.0) << "%"
+              << " | latest temp=" << (info.temperature[kFridgeHistoryInfoSize - 1]) << "C"
+              << " | humidity=" << (info.humidity[kFridgeHistoryInfoSize - 1]) << "%"
               << " | weight=" << info.weight[kFridgeHistoryInfoSize - 1] << "g"
               << " | door=" << (int)info.doorStatus[kFridgeHistoryInfoSize - 1]);
     return info;

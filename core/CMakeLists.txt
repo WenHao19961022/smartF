@@ -2,7 +2,7 @@
 
 # 联调测试开关：启用 Mock STM32（无真实硬件时使用）
 # 编译时加上 -DUSE_MOCK_STM32=1 或设为 true 来启用
-add_compile_definitions(USE_MOCK_STM32=1)
+# add_compile_definitions(USE_MOCK_STM32=1)
 
 # 搜集主程序源文件
 file(GLOB CORE_SOURCES "src/*.cpp")

@@ -31,7 +31,7 @@ MessageReceverManager::~MessageReceverManager() {
 }
 
 bool MessageReceverManager::InitSerial() {
-    mSerialFd = open(mSerialPort.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    mSerialFd = open(mSerialPort.c_str(), O_RDWR | O_NOCTTY);
 
     if (mSerialFd < 0) {
         LOG_PRINT("[Stm32]", "Failed to open serial port: " << mSerialPort << " (" << strerror(errno) << ")");
@@ -79,7 +79,7 @@ bool MessageReceverManager::InitSerial() {
     tty.c_oflag &= ~ONLCR;
 
     // 超时设置
-    tty.c_cc[VMIN] = 0;
+    tty.c_cc[VMIN] = 1;
     tty.c_cc[VTIME] = 1;  // 0.1秒超时
 
     if (tcsetattr(mSerialFd, TCSANOW, &tty) != 0) {
@@ -159,14 +159,34 @@ FrigeratorHistoryInfo MessageReceverManager::GetFrigeratorHistoryInfo() {
     return mHistoryInfo;
 }
 
-bool MessageReceverManager::ReadFromSerial(std::vector<uint8_t>& buffer) {
-    if (mSerialFd < 0) return false;
+bool MessageReceverManager::ReadFromSerial(std::vector<uint8_t>& buffer)
+{
+    if (mSerialFd < 0)
+        return false;
 
     uint8_t tempBuf[256];
+
     ssize_t bytesRead = read(mSerialFd, tempBuf, sizeof(tempBuf));
 
-    if (bytesRead > 0) {
+    if (bytesRead > 0)
+    {
         buffer.assign(tempBuf, tempBuf + bytesRead);
+
+        std::ostringstream oss;
+
+        oss << "Read " << bytesRead << " bytes: ";
+
+        for (int i = 0; i < bytesRead; i++)
+        {
+            oss << std::hex
+                << std::setw(2)
+                << std::setfill('0')
+                << static_cast<int>(tempBuf[i])
+                << " ";
+        }
+
+        LOG_PRINT("[Stm32]", oss.str());
+
         return true;
     }
 
@@ -178,71 +198,80 @@ bool MessageReceverManager::ParseSerialData(
     FrigeratorInfoWithTimestamp& result)
 {
     /*
-     * STM32通信协议帧格式：
-     * [0]     HEAD      = 0xAA
-     * [1]     LEN       = 数据长度
-     * [2]     CMD       = 命令字
-     * [3..N-2] DATA     = 数据域
-     * [N-1]   CHECKSUM  = 校验和（XOR）
-     * [N]     TAIL      = 0x55
-     *
-     * 数据域（LEN=6时）：
-     * [0-1]   温度 (uint16, ×10, 如 49 = 4.9°C)
-     * [2-3]   湿度 (uint16, ×10, 如 805 = 80.5%)
-     * [4-5]   重量 (uint16, 单位g)
-     * [6]     门状态 (0=关, 1=开)
+     * STM32通信协议精准映射（基于真实抓包数据）：
+     * [0]    HEAD      = 0xAA
+     * [1]    LEN       = 0x08 (参与校验和计算的字节数，即 CMD + DATA 的总长度)
+     * [2]    CMD       = 命令字 (0x01)
+     * ---------------- DATA 域 (LEN = 8) ----------------
+     * [3]    base[0]   = 温度 (单字节, 0x1D = 29°C)
+     * [4]    base[1]   = 占位/未知 (0x00)
+     * [5]    base[2]   = 湿度 (单字节, 0x32 = 50%)
+     * [6]    base[3]   = 占位/未知 (0x00)
+     * [7-8]  base[4-5] = 重量 (uint16_t, 大端序, 当前 0x0001 = 1g)
+     * [9]    base[6]   = 门状态 (单字节, 0=关, 1=开)
+     * --------------------------------------------------
+     * [10]   CHECKSUM  = 校验和（从 CMD[2] 开始，连续异或 LEN[1] 个字节）
+     * [11]   TAIL      = 0x55
      */
 
     size_t i = 0;
     while (i < data.size()) {
-        // 查找帧头
+        // 1. 寻找帧头
         if (data[i] != kFrameHead) {
             i++;
             continue;
         }
 
-        // 检查是否有足够的数据
-        if (i + kFrameMinLen > data.size()) {
+        // 2. 边界检查：确保至少有 HEAD(1) + LEN(1) 两个字节用来读取长度
+        if (i + 2 > data.size()) {
             break;
         }
 
-        uint8_t len = data[i + 1];
+        uint8_t len = data[i + 1]; // len = 8
+        size_t frameLen = 2 + len + 2; // HEAD(1) + LEN(1) + DATA_BLOCK(8) + CHECK(1) + TAIL(1) = 12
 
-        // 验证帧尾
-        if (data[i + 2 + len + 1] != kFrameTail) {
+        // 3. 检查当前缓冲区内整帧数据是否完整
+        if (i + frameLen > data.size()) {
+            break;
+        }
+
+        // 4. 验证帧尾
+        if (data[i + frameLen - 1] != kFrameTail) {
             i++;
             continue;
         }
 
-        // 验证校验和
+        // 5. 验证校验和（从 CMD 字节开始，向后异或 len 个字节）
         uint8_t checksum = 0;
-        for (size_t j = i + 2; j < i + 2 + len; j++) {
-            checksum ^= data[j];
+        size_t checksumStart = i + 2; // CMD 的位置
+        for (size_t j = 0; j < len; j++) {
+            checksum ^= data[checksumStart + j];
         }
+        
         if (checksum != data[i + 2 + len]) {
+            // 校验失败，说明不是有效帧
             i++;
             continue;
         }
 
-        // 解析数据域
-        if (len >= 7) {
-            size_t base = i + 3;
+        // 6. 校验通过，精准提取数据
+        size_t base = i + 3; // DATA 域的起始点 (即温度所在位置)
 
-            result.info.temperature = static_cast<uint16_t>(
-                data[base] | (data[base + 1] << 8));
-            result.info.humidity = static_cast<uint16_t>(
-                data[base + 2] | (data[base + 3] << 8));
-            result.info.weight = static_cast<uint16_t>(
-                data[base + 4] | (data[base + 5] << 8));
-            result.info.doorStatus = (data[base + 6] == 1)
-                ? DoorStatus::DoorOpen
-                : DoorStatus::DoorClosed;
+        // 严格按照你的抓包映射赋值
+        result.info.temperature = static_cast<float>(data[base]);       // 0x1d -> 29.0C
+        result.info.humidity    = static_cast<float>(data[base + 2]);   // 0x32 -> 50.0%
+        
+        // 重量占用两个字节，采用大端序拼装：(data[base+4] << 8) | data[base+5]
+        result.info.weight      = static_cast<uint16_t>((data[base + 4] << 8) | data[base + 5]); // 0x0001 -> 1g
+        
+        // 门状态在 base + 6
+        result.info.doorStatus  = (data[base + 6] == 1) 
+            ? DoorStatus::DoorOpen 
+            : DoorStatus::DoorClosed;
 
-            result.timestamp = static_cast<uint32_t>(std::time(nullptr));
-            return true;
-        }
-
-        i += 2 + len + 2;  // 跳过完整帧
+        // 更新时间戳
+        result.timestamp = static_cast<uint32_t>(std::time(nullptr));
+        return true;
     }
 
     return false;
@@ -260,8 +289,8 @@ FrigeratorInfoWithTimestamp MessageReceverManager::GetLatestFrigeratorInfo() {
         }
         LOG_PRINT("[Stm32]", hexDump.str());
         if (ParseSerialData(serialBuf, latestInfo)) {
-            LOG_PRINT("[Stm32]", "Parsed successfully: temp=" << (latestInfo.info.temperature / 10.0)
-                      << "C | humidity=" << (latestInfo.info.humidity / 10.0)
+            LOG_PRINT("[Stm32]", "Parsed successfully: temp=" << (latestInfo.info.temperature)
+                      << "C | humidity=" << (latestInfo.info.humidity)
                       << "% | weight=" << latestInfo.info.weight
                       << "g | door=" << (int)latestInfo.info.doorStatus
                       << " | ts=" << latestInfo.timestamp);
@@ -272,6 +301,7 @@ FrigeratorInfoWithTimestamp MessageReceverManager::GetLatestFrigeratorInfo() {
         }
     } else {
         latestInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
+        LOG_PRINT("[Stm32]", "No serial data available");
         latestInfo.info = {};
     }
 
