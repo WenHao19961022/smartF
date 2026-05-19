@@ -46,8 +46,8 @@ bool CvModelManager::CvModelInit() {
         mBaselineEstablished = false;
     }
 
-    std::string enginePath = ConfigManager::GetInstance().GetString("cv.model_path", "cv_model/yolov8/yolo.engine");
-    std::string onnxPath = ConfigManager::GetInstance().GetString("cv.model_onnx_path", "cv_model/yolov8/yolo12n.onnx");
+    std::string enginePath = ConfigManager::GetInstance().GetString("cv.model_path", "cv_model/yolov8/yolov8s.engine");
+    std::string onnxPath = ConfigManager::GetInstance().GetString("cv.model_onnx_path", "cv_model/yolov8/yolov8s.onnx");
 
     try {
         mInferenceEngine = std::make_unique<InferenceEngine>(enginePath);
@@ -198,6 +198,8 @@ void CvModelManager::StaticRecognitionInternal() {
                 auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
                 for (const auto& det : detections) {
                     auto key = std::make_tuple(det.fruitType, det.locationX, det.locationY);
+                    LOG_PRINT("[CvModel]", "  Detection " << detectionIndex << ": type=" << (int)det.fruitType
+                              << " pos=(" << (int)det.locationX << "," << (int)det.locationY << ")");
                     fruitCounts[key]++;
                 }
                 successfulDetections++;

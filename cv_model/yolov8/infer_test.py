@@ -40,8 +40,8 @@ def do_inference(context, bindings, inputs, outputs, stream):
     return [out.host for out in outputs]
 
 def main():
-    # 修正路径确保能直接读到 yolo.engine
-    engine_path = "./yolo.engine"
+    # 修正路径确保能直接读到 yolov8s.engine
+    engine_path = "./yolov8s.engine"
     if not os.path.exists(engine_path):
         print(f"❌ 找不到 engine 文件: {engine_path}")
         return

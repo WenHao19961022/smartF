@@ -31,8 +31,8 @@ ConfigManager::ConfigManager() {
     mConfig["serial.humidity_threshold"] = "5";
 
     // CV模型配置
-    mConfig["cv.model_path"] = "cv_model/yolov8/yolo.engine";
-    mConfig["cv.model_onnx_path"] = "cv_model/yolov8/yolo12n.onnx";
+    mConfig["cv.model_path"] = "cv_model/yolov8/yolov8s.engine";
+    mConfig["cv.model_onnx_path"] = "cv_model/yolov8/yolov8s.onnx";
     mConfig["cv.conf_threshold"] = "0.5";
     mConfig["cv.nms_threshold"] = "0.4";
 
