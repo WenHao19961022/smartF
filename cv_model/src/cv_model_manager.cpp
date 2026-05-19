@@ -46,7 +46,7 @@ bool CvModelManager::CvModelInit() {
         mBaselineEstablished = false;
     }
 
-    std::string enginePath = ConfigManager::GetInstance().GetString("cv.model_path", "cv_model/yolov8/yolo12n.engine");
+    std::string enginePath = ConfigManager::GetInstance().GetString("cv.model_path", "cv_model/yolov8/yolo.engine");
     std::string onnxPath = ConfigManager::GetInstance().GetString("cv.model_onnx_path", "cv_model/yolov8/yolo12n.onnx");
 
     try {

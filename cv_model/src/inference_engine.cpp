@@ -21,7 +21,7 @@ InferenceEngine::InferenceEngine(const std::string& enginePath) {
     }
 
     // CPU 模式：尝试加载 ONNX 模型（从 enginePath 推断 onnx 路径）
-    // 例如 /path/to/yolo12n.engine -> /path/to/yolo12n.onnx
+    // 例如 /path/to/yolo.engine -> /path/to/yolo12n.onnx
     std::string onnxPath = enginePath;
     size_t pos = onnxPath.rfind(".engine");
     if (pos != std::string::npos) {
