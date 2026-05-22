@@ -94,6 +94,7 @@ void CvModelManager::MainLoop() {
 }
 
 // ==================== YOLO后处理 ====================
+// ==================== YOLO Post-Processing ====================
 static std::vector<FruitInfo> PostProcessYOLO(
     const std::vector<float>& output,
     const std::vector<int>& outputDims,
@@ -110,6 +111,12 @@ static std::vector<FruitInfo> PostProcessYOLO(
     int numClasses = outputDims[1] - 4;
 
     const int kNumFruitClasses = 6;
+
+    // --- ADDED: Define class labels mapping ---
+    const std::vector<std::string> class_labels = {
+        "fresh_apple", "fresh_banana", "fresh_orange", 
+        "rotten_apple", "rotten_banana", "rotten_orange"
+    };
 
     struct Detection {
         float cx, cy, w, h;
@@ -142,10 +149,20 @@ static std::vector<FruitInfo> PostProcessYOLO(
 
     std::vector<bool> suppressed(detections.size(), false);
 
+    // If there are detections, print a separator for this frame
+    if (!detections.empty()) {
+        std::cout << "============ 检测到目标 ==========" << std::endl;
+    }
+
     for (size_t i = 0; i < detections.size(); ++i) {
         if (suppressed[i]) continue;
 
         const auto& det = detections[i];
+        
+        // --- ADDED: Print [ID] Label directly to terminal ---
+        std::string label_name = (det.classId < class_labels.size()) ? class_labels[det.classId] : "Unknown";
+        std::cout << "[" << det.classId << "] " << label_name << std::endl;
+
         FruitInfo info;
         info.fruitType = static_cast<FruitType>(det.classId + 1);
         info.locationX = static_cast<uint8_t>(std::min(255, static_cast<int>(det.cx)));
@@ -154,6 +171,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
 
         results.push_back(info);
 
+        // NMS logic
         for (size_t j = i + 1; j < detections.size(); ++j) {
             if (suppressed[j] || detections[j].classId != det.classId) continue;
 
@@ -169,7 +187,6 @@ static std::vector<FruitInfo> PostProcessYOLO(
 
     return results;
 }
-
 // ==================== 静态识别 ====================
 void CvModelManager::StaticRecognitionInternal() {
     LOG_PRINT("[CvModel]", "=== StaticRecognitionInternal START ===");
