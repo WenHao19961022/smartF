@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourcePerFileMappings">
+    <file url="file://$PROJECT_DIR$/.idea/queries/Query.sql" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/mapper/DeviceStatusMapper.xml" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/mapper/FridgeInventoryMapper.xml" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/mapper/FruitDictMapper.xml" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/mapper/NotificationMapper.xml" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/mapper/SysUserMapper.xml" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/mapper/UserDeviceMapper.xml" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/mapper/WeightLogMapper.xml" value="68fe3c5d-e555-493d-a86a-9981633f56c8" />
+  </component>
+</project>

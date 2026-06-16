@@ -11,6 +11,7 @@ void InventoryManager::Reconcile(
     uint32_t batchTs) 
 {
     LOG_START("V5.0 终极对账大脑启动: 理论建模与底噪隔离");
+    const int32_t kWeightEvidenceThreshold = 20; // STM32 稳定重量小于该变化时，优先认为是遮挡/视觉抖动
 
     // === 1. 静态事实确立与均重计算器 ===
     std::map<FruitType, int32_t> staticCounts;
@@ -25,6 +26,33 @@ void InventoryManager::Reconcile(
     }
     for (auto const& [type, count] : staticCounts) {
         if (mStock.find(type) == mStock.end()) realCountDelta[type] = count;
+    }
+
+    std::map<FruitType, int32_t> effectiveDynCountDelta = dynCountDelta;
+    int32_t physicalDelta = finalStableWeight - GetBookTotalWeight();
+    bool noRemovalWeightEvidence = physicalDelta > -kWeightEvidenceThreshold;
+    bool noPutInWeightEvidence = physicalDelta < kWeightEvidenceThreshold;
+
+    // 遮挡修正：视觉少看见了水果，但 STM32 总重量没有对应下降时，不把它当作取出。
+    for (auto& [type, delta] : realCountDelta) {
+        if (delta < 0 && noRemovalWeightEvidence) {
+            LOG_WARN("遮挡保护: 静态识别显示 type=" << (int)type << " 少了 " << std::abs(delta)
+                     << " 个，但重量变化仅 " << physicalDelta << "g，保留库存数量");
+            delta = 0;
+        }
+    }
+
+    // 动态误报修正：动态说取出/放入，但重量方向没有支持时，降低其对对账的影响。
+    for (auto& [type, delta] : effectiveDynCountDelta) {
+        if (delta < 0 && noRemovalWeightEvidence) {
+            LOG_WARN("遮挡保护: 动态识别疑似误报 TAKE_OUT type=" << (int)type
+                     << "，重量变化=" << physicalDelta << "g，忽略该动态数量变化");
+            delta = 0;
+        } else if (delta > 0 && noPutInWeightEvidence) {
+            LOG_WARN("重量保护: 动态识别疑似误报 PUT_IN type=" << (int)type
+                     << "，重量变化=" << physicalDelta << "g，忽略该动态数量变化");
+            delta = 0;
+        }
     }
 
     std::map<FruitType, int32_t> historicalAvgWeights;
@@ -44,11 +72,11 @@ void InventoryManager::Reconcile(
     std::map<FruitType, bool> allActiveTypes;
 
     for (const auto& [t, d] : realCountDelta) if (d != 0) allActiveTypes[t] = true;
-    for (const auto& [t, d] : dynCountDelta) if (d != 0) allActiveTypes[t] = true;
+    for (const auto& [t, d] : effectiveDynCountDelta) if (d != 0) allActiveTypes[t] = true;
 
     for (const auto& [t, _] : allActiveTypes) {
         int32_t rDelta = realCountDelta.count(t) ? realCountDelta[t] : 0;
-        int32_t dDelta = dynCountDelta.count(t) ? dynCountDelta.at(t) : 0;
+        int32_t dDelta = effectiveDynCountDelta.count(t) ? effectiveDynCountDelta.at(t) : 0;
         if (rDelta == dDelta) matchedTypes.push_back(t);
         else mismatchedTypes.push_back(t);
     }

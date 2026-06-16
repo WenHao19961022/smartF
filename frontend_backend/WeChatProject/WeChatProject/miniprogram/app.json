@@ -1,0 +1,55 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/login/login",
+    "pages/detail/detail",
+    "pages/mine/mine",
+    "pages/bind/bind",
+    "pages/eco/eco"
+  ],
+  "window": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "智慧冰箱健康管家",
+    "navigationBarBackgroundColor": "#8ddbc0",
+    "backgroundColor": "#d9eff7"
+  },
+  "tabBar": {
+    "color": "#7d7e80",
+    "selectedColor": "#27ae60",
+    "backgroundColor": "#ffffff",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "实时库存",
+        "iconPath": "/images/tab/home.png",
+        "selectedIconPath": "/images/tab/home-active.png"
+      },
+      {
+        "pagePath": "pages/eco/eco",
+        "text": "鲜果星球",
+        "iconPath": "images/tab/eco.png",
+        "selectedIconPath": "images/tab/eco-active.png"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的设备",
+        "iconPath": "/images/tab/user.png",
+        "selectedIconPath": "/images/tab/user-active.png"
+      }
+    ]
+  },
+  "usingComponents": {
+    "van-icon": "@vant/weapp/icon/index",
+    "van-button": "@vant/weapp/button/index",
+    "van-field": "@vant/weapp/field/index",
+    "van-dialog": "@vant/weapp/dialog/index",
+    "van-progress": "@vant/weapp/progress/index",
+    "van-switch": "@vant/weapp/switch/index",
+    "van-cell": "@vant/weapp/cell/index",
+    "van-cell-group": "@vant/weapp/cell-group/index",
+    "van-search": "@vant/weapp/search/index",
+    "van-empty": "@vant/weapp/empty/index",
+    "van-notify": "@vant/weapp/notify/index"
+  },
+  "sitemapLocation": "sitemap.json"
+}

@@ -1,0 +1,50 @@
+<view class="page-container">
+  <!-- 1. 顶部搜索框 (海尔风格) -->
+  <view class="search-bar-wrap">
+    <van-search
+      value="{{ searchVal }}"
+      placeholder="搜索设备名称或SN序列号"
+      bind:change="onSearchChange"
+      shape="round"
+      background="#FFFFFF"
+    />
+  </view>
+
+  <!-- 2. 设备列表 (1:1 模仿图2) -->
+  <view class="device-list">
+    <view class="list-hint" wx:if="{{searchVal && filteredList.length > 0}}">已为您找到以下设备：</view>
+    
+    <block wx:for="{{filteredList}}" wx:key="sn">
+      <view class="device-item {{selectedSn === item.sn ? 'item-selected' : ''}}" 
+            bindtap="selectDevice" 
+            data-sn="{{item.sn}}">
+        
+        <!-- 左侧：冰箱图形图标 -->
+        <view class="device-icon-box">
+          <image class="fridge-icon" src="/images/icons/fridge_model.png" mode="aspectFit" />
+        </view>
+
+        <!-- 中间：名称和类别 -->
+        <view class="device-content">
+          <view class="device-title">{{item.name}}</view>
+          <view class="device-sub">水果 智能冰箱 ({{item.sn}})</view>
+        </view>
+
+        <!-- 右侧：状态 -->
+        <view class="device-status">暂未接入</view>
+      </view>
+    </block>
+
+    <!-- 搜索不到时的占位 -->
+    <van-empty wx:if="{{searchVal && filteredList.length === 0}}" image="search" description="未搜索到相关设备" />
+  </view>
+
+  <!-- 3. 底部固定按钮 (高饱和度绿) -->
+  <view class="footer-action" wx:if="{{selectedSn}}">
+    <van-button 
+      block round 
+      bindtap="confirmBind"
+      custom-class="green-confirm-btn"
+    >确认绑定此设备</van-button>
+  </view>
+</view>

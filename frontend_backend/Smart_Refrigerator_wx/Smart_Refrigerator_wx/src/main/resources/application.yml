@@ -1,0 +1,101 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: smart-fridge-backend
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/smart_fridge?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: 328916
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      timeout: 5000ms
+      # 如果Redis需要密码，请取消注释
+      # password: your_redis_password
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: 378140667@qq.com
+    password: slycbtqgkcexbhjd
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+
+# MyBatis-Plus配置
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.smartfridge.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# MQTT配置
+mqtt:
+  broker-url: tcp://localhost:1883
+  username: admin
+  password: admin123
+  client-id: smart-fridge-server-${random.value} # 使用随机 ID 防止连接冲突
+  default-topic: smartfridge/data # 硬件上报数据的默认主题
+
+# 微信小程序配置
+wechat:
+  appid: wx80215353fd544446
+  secret: 1733a16a16af0e018a12af4648d1b990
+  template-id: wa1J5JjCnRNuk9oJo1WVJse1CkmxVxMugMOkYDqkBfE
+
+# JWT配置
+jwt:
+  # 增加一个强密钥，防止 Token 被伪造
+  secret: SmartFridgeJwtSecretKey2024VerySecure256Bits
+  expiration: 86400000  # 24小时有效 (毫秒)
+
+# AES 加密密钥（手机号加密用，32字符，线上务必通过环境变量注入）
+crypto:
+  phone-key: SmartFridgePhoneAES256Key2024
+
+# 业务自定义配置 (用于定时任务和阈值判定)
+fridge:
+  freshness-threshold: 20    # 新鲜度低于 20% 时触发预警
+  weight-noise-threshold: 5  # 重量波动小于 5g 视为传感器噪点，不予记录
+
+# Knife4j配置
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+  group-configs:
+    - group: 'default'
+      paths-to-match: '/**'
+      packages-to-scan: com.smartfridge.controller
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+

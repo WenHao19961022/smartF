@@ -162,6 +162,11 @@ bool InferenceEngine::InferCpu(const cv::Mat& frame, std::vector<float>& outputD
         mCpuNet.setInput(blob);
         cv::Mat prob = mCpuNet.forward();
 
+        mOutputDims.clear();
+        for (int i = 0; i < prob.dims; ++i) {
+            mOutputDims.push_back(prob.size[i]);
+        }
+
         outputData.resize(prob.total());
         memcpy(outputData.data(), prob.data, prob.total() * sizeof(float));
         return true;

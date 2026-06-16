@@ -1,0 +1,42 @@
+/* 全局磨砂样式 */
+.glass-box {
+  background: rgba(255, 255, 255, 0.45) !important;
+  backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 40rpx;
+  box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.03);
+}
+
+/* 首页引导卡片 */
+.add-device-card {
+  height: 460rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 40rpx;
+}
+
+.placeholder-img { width: 300rpx; height: 300rpx; opacity: 0.8; }
+.add-label { font-weight: bold; color: #27ae60; display: flex; align-items: center; margin-top: 20rpx; }
+
+/* 高饱和度绿色按钮 */
+.main-green-btn {
+  background: linear-gradient(135deg, #a7eec0 0%, #27ae60 100%) !important;
+  border: none !important;
+  color: white !important;
+  font-weight: bold !important;
+  height: 100rpx !important;
+  box-shadow: 0 10rpx 25rpx rgba(39, 174, 96, 0.3);
+}
+
+/* 呼吸灯效果 */
+.dot.pulse {
+  background: #27ae60;
+  animation: pulse-kf 2s infinite;
+}
+@keyframes pulse-kf {
+  0% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0.7); }
+  70% { box-shadow: 0 0 0 12rpx rgba(39, 174, 96, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0); }
+}

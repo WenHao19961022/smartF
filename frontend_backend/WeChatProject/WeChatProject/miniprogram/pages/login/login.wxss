@@ -1,0 +1,62 @@
+.login-page {
+  padding: 40rpx;
+  min-height: 100vh;
+  background-color: #fff; /* 登录页背景建议纯白，突出绿色按钮 */
+  display: flex;
+  flex-direction: column;
+}
+
+.login-welcome {
+  margin: 160rpx 0 120rpx;
+  text-align: center;
+}
+
+.login-welcome .title {
+  font-size: 52rpx;
+  font-weight: bold;
+  color: #1a1a1a;
+}
+
+.btn-wrap {
+  padding: 0 40rpx;
+}
+
+/* 之前设置的高饱和度果园绿按钮 */
+.green-login-btn {
+  background: linear-gradient(135deg, #a7eec0 0%, #27ae60 100%) !important;
+  color: #fff !important;
+  border: none !important;
+  font-weight: bold !important;
+  height: 100rpx !important;
+  font-size: 34rpx !important;
+  box-shadow: 0 12rpx 30rpx rgba(39, 174, 96, 0.25);
+}
+
+/* 底部协议区：核心修复对齐逻辑 */
+.protocol-section {
+  position: fixed;
+  bottom: 100rpx;
+  left: 0;
+  right: 0;
+  padding: 0 50rpx;
+  display: flex;
+  justify-content: center; /* 水平居中 */
+  align-items: center;    /* 关键：垂直居中对齐 */
+}
+
+/* 缩放原生 checkbox 大小 */
+.custom-checkbox {
+  transform: scale(0.65); /* 缩小勾选框，匹配文字 */
+  margin-right: -10rpx;   /* 抵消缩放产生的空隙 */
+}
+
+.protocol-text {
+  font-size: 24rpx;
+  color: #999;
+  line-height: 1; /* 确保文字没有额外的上下间距 */
+}
+
+.protocol-text .link {
+  color: #27ae60; /* 链接也使用果园绿 */
+  padding: 0 4rpx;
+}

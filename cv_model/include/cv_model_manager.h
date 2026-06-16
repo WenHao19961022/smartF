@@ -26,6 +26,7 @@ const int kDynamicBaselineFrames = 10;  // 开关ON后前N帧确立基准
 const float kDynamicDisappearRatio = 0.3f;  // 出现率<30%判定消失（TAKE_OUT）
 const float kDynamicAppearRatio = 0.7f;     // 出现率>70%判定新增（PUT_IN）
 const int kDynamicPositionTolerance = 20;   // 位置容差（像素）
+const int kDynamicEventCooldownFrames = 15; // 事件确认后的短冷却，避免同一动作重复上报
 
 // ==================== 水果状态追踪项 ====================
 // 用于追踪每个被监测水果的出现/消失状态
@@ -38,6 +39,7 @@ struct TrackedFruitState {
     int continuousCount;       // 连续出现帧数（用于新增检测）
     int continuousAbsentCount;// 连续消失帧数（用于消失检测）
     int totalAppearCount;      // 窗口内总出现帧数
+    int cooldownFrames;        // 事件确认后的冷却帧数
 };
 
 // ==================== CV模型管理类 ====================
@@ -75,6 +77,7 @@ private:
     void DynamicEstablishBaseline();     // 确立基准状态
     void DynamicMonitoringStep();        // 监测步骤（每帧调用）
     void DynamicCheckChanges();          // 检测变化并记录事件
+    int CountWindowAppearances(const TrackedFruitState& tracked) const;
 
     // 工具方法
     bool IsFruitSimilar(const FruitInfo& a, const FruitInfo& b) const;

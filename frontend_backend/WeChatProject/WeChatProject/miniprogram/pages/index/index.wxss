@@ -1,0 +1,124 @@
+.page-bg {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #d9eff7 0%, #eef7f9 50%, #f4f6f3 100%);
+}
+
+.container { padding: 30rpx; }
+.welcome-header { font-size: 52rpx; font-weight: bold; color: #1a1a1a; margin: 40rpx 0 20rpx; }
+
+.glass-box {
+  background: rgba(255, 255, 255, 0.45) !important;
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8rpx 32rpx rgba(0, 0, 0, 0.03);
+}
+
+/* 添加设备引导 */
+.guide-card { border-radius: 50rpx; padding: 60rpx 40rpx; text-align: center; }
+.guide-title { font-size: 44rpx; font-weight: bold; color: #333; }
+.guide-desc { font-size: 26rpx; color: #8a9ea5; margin-top: 15rpx; }
+.guide-img { width: 450rpx; height: 350rpx; margin: 40rpx 0; }
+.add-device-btn { display: flex; align-items: center; justify-content: center; color: #27ae60; font-weight: bold; font-size: 34rpx; }
+
+/* 状态概览 */
+.status-card { border-radius: 40rpx; padding: 40rpx 30rpx; margin-bottom: 50rpx; }
+.card-title {
+  font-size: 36rpx;
+  font-weight: bold;
+  color: #333;
+  margin-bottom: 30rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+/* 温度湿度徽章 */
+.env-row { display: flex; gap: 16rpx; }
+.env-badge {
+  font-size: 24rpx;
+  font-weight: 500;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.5);
+  padding: 6rpx 20rpx;
+  border-radius: 24rpx;
+  white-space: nowrap;
+}
+.status-content { display: flex; align-items: center; }
+.status-left { flex-shrink: 0; padding-right: 20rpx; }
+.online-indicator {
+  background: linear-gradient(135deg, #a7eec0 0%, #76d09d 100%);
+  border-radius: 40rpx; width: 170rpx; height: 170rpx;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  box-shadow: 0 12rpx 30rpx rgba(118, 208, 157, 0.5);
+}
+/* 离线状态：灰色版本 */
+.online-indicator.offline {
+  background: linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%);
+  box-shadow: 0 12rpx 30rpx rgba(148, 163, 184, 0.3);
+}
+.big-status { color: #1b5e20; font-size: 44rpx; font-weight: bold; }
+.small-label { color: #2e7d32; font-size: 24rpx; }
+/* 离线时字色跟随灰底 */
+.online-indicator.offline .big-status { color: #334155; }
+.online-indicator.offline .small-label { color: #475569; }
+.status-right { flex: 1; display: flex; justify-content: space-around; }
+.info-item { text-align: center; }
+.info-val { font-size: 48rpx; font-weight: bold; color: #333; }
+.info-lab { font-size: 24rpx; color: #8a9ea5; }
+
+.section-title { font-size: 38rpx; font-weight: bold; margin-bottom: 30rpx; display: flex; justify-content: space-between; padding: 0 10rpx; }
+
+/* 水果列表卡片 */
+.item-card {
+  position: relative; /* 必须加，用于定位红铃铛 */
+  border-radius: 60rpx;
+  padding: 40rpx 45rpx;
+  margin-bottom: 30rpx;
+  display: flex;
+  align-items: flex-start;
+}
+
+/* 【新增】红色预警小铃铛样式 */
+.warning-bell {
+  position: absolute;
+  top: 40rpx;
+  right: 50rpx;
+  z-index: 10;
+}
+
+.bell-pulse {
+  animation: bell-breathing 2s infinite ease-in-out;
+  display: block;
+}
+
+@keyframes bell-breathing {
+  0% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 2rpx #ff4757); }
+  50% { transform: scale(1.15); opacity: 0.7; filter: drop-shadow(0 0 10rpx #ff4757); }
+  100% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 2rpx #ff4757); }
+}
+
+.fruit-thumb { width: 130rpx; height: 130rpx; margin-right: 35rpx; margin-top: 10rpx; }
+.fruit-main { flex: 1; }
+.name-row { display: flex; align-items: baseline; margin-bottom: 15rpx; }
+.f-name { font-size: 44rpx; font-weight: bold; color: #1e293b; }
+.f-count { font-size: 34rpx; margin-left: 15rpx; color: #475569; }
+
+.time-info { margin-bottom: 20rpx; }
+.time-item { font-size: 24rpx; line-height: 1.6; display: flex; }
+.time-label { color: #94a3b8; width: 80rpx; }
+.time-val { color: #64748b; }
+.highlight { color: #f39c12; font-weight: 500; }
+
+.freshness-box { margin-top: 25rpx; }
+.freshness-label { display: flex; justify-content: space-between; font-size: 22rpx; color: #94a3b8; margin-bottom: 10rpx; }
+.freshness-num { font-weight: bold; }
+
+/* 聚合类别卡片样式 */
+.category-card { padding: 30rpx 40rpx; display: flex; align-items: center; justify-content: space-between; border-radius: 40rpx; }
+.fruit-main { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.f-name { font-size: 40rpx; font-weight: bold; color: #1e293b; margin-bottom: 8rpx; display: block;}
+.category-desc { display: flex; flex-direction: column; }
+.total-count { font-size: 28rpx; font-weight: bold; color: #475569; margin-bottom: 4rpx; }
+.hint-text { font-size: 22rpx; color: #94a3b8; }
+.card-action { display: flex; align-items: center; }
+.warning-bell-inline { margin-right: 20rpx; }

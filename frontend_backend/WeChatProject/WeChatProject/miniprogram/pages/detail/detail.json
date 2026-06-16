@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "物品追踪地图",
+  "usingComponents": {
+    "van-progress": "@vant/weapp/progress/index",
+    "van-icon": "@vant/weapp/icon/index"
+  }
+}

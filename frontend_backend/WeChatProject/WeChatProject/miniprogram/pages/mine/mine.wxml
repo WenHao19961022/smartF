@@ -1,0 +1,57 @@
+<view class="page-container">
+  <view class="user-header-v3" bindtap="{{!isLogin ? 'handleNavToLogin' : ''}}">
+    <view class="avatar-wrap">
+      <image src="{{isLogin ? '/images/tab/user-active.png' : '/images/icons/default_avatar.png'}}" class="avatar-img" />
+    </view>
+    <view class="user-text">
+      <text class="name">{{isLogin ? '冰箱主人' : '登录开启智慧生活'}}</text>
+      <van-icon name="arrow" color="#ccc" wx:if="{{!isLogin}}" />
+    </view>
+  </view>
+
+  <view class="section-label">我的硬件</view>
+  <view class="glass-box">
+    <van-cell title="设备型号" value="{{deviceSn ? 'Jetson Nano' : '未连接'}}" border="{{false}}" />
+    <van-cell title="序列号" value="{{deviceSn || '待绑定'}}" border="{{false}}" />
+    <view class="status-footer">
+      <view class="dot {{deviceSn && isLogin ? 'pulse' : ''}}"></view>
+      <text class="status-text">{{isLogin && deviceSn ? '实时数据同步中...' : '请先绑定设备'}}</text>
+    </view>
+  </view>
+
+  <view class="section-label">提醒设置</view>
+  <view class="glass-box">
+    <van-cell title="开启邮件预警" label="新鲜度较低时自动发送邮件" center border="{{false}}">
+      <van-switch
+        checked="{{ pushEnabled }}"
+        disabled="{{ !isLogin || !deviceSn || !email }}"
+        size="24px"
+        active-color="#27ae60"
+        bind:change="onSmsToggle"
+      />
+    </van-cell>
+
+    <van-cell 
+      wx:if="{{ isLogin && email }}"
+      title="接收预警邮箱" 
+      is-link 
+      value="{{ emailDisplay }}" 
+      bindtap="onBindPhone" 
+      border="{{false}}"
+    />
+    <van-cell 
+      wx:else
+      title="接收预警邮箱" 
+      is-link 
+      value="点击绑定" 
+      bindtap="onBindPhone" 
+      border="{{false}}"
+    />
+  </view>
+
+  <!-- <view style="font-size:20rpx; color:rgba(0,0,0,0.2); padding:20rpx; text-align:center;">
+    <text>状态调试: 登录({{isLogin}}) | 绑定({{deviceSn ? '是' : '否'}}) | 邮箱({{email ? '是' : '否'}})</text>
+  </view> -->
+
+  <view wx:if="{{isLogin}}" class="logout-btn" bindtap="onLogout">退出当前账号</view>
+</view>

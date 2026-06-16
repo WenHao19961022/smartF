@@ -52,7 +52,7 @@ struct FruitInfoWithTimestamp {
 struct FruitChangeEvent {
     FruitType fruitType;
     FruitChangeAction action;  // 放入 / 取出
-    uint32_t timestamp;        // 变化确认时刻
+    uint32_t timestamp;        // 变化确认时刻，毫秒时间戳低32位
     uint8_t locationX;
     uint8_t locationY;
 };

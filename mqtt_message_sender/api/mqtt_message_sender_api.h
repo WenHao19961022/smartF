@@ -13,6 +13,8 @@ struct MqttFruitItem {
     FreshnessLevel freshness;
     uint32_t weight;
     uint32_t putInTime;
+    uint8_t locationX;
+    uint8_t locationY;
 };
 
 struct MqttMessageStruct {

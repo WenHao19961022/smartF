@@ -1,0 +1,79 @@
+<view class="page-bg">
+  <view class="container">
+    <view class="welcome-header">Hi, 欢迎回家！</view>
+
+    <block wx:if="{{!deviceSn}}">
+      <view class="guide-card glass-box" bindtap="onAddAction">
+        <view class="guide-title">智能健康冰箱</view>
+        <view class="guide-desc">智能家电绑定，开启新鲜生活</view>
+        <image class="guide-img" src="/images/icons/fridge_main.png" mode="aspectFit" />
+        <view class="add-device-btn">
+          <van-icon name="plus" size="20px" />
+          <text>添加设备</text>
+        </view>
+      </view>
+    </block>
+
+    <block wx:else>
+      <view class="status-card glass-box">
+        <view class="card-title">
+          <text>冰箱实时状态</text>
+          <view class="env-row">
+            <view class="env-badge">🌡 {{temperature == null ? '--' : temperature}}°C</view>
+            <view class="env-badge">💧 {{humidity == null ? '--' : humidity}}%</view>
+          </view>
+        </view>
+        <view class="status-content">
+          <view class="status-left">
+            <view class="online-indicator {{isOnline === false ? 'offline' : ''}}">
+              <view class="big-status">{{isOnline === false ? '离线' : '在线'}}</view>
+              <view class="small-label">连接状态</view>
+            </view>
+          </view>
+          <view class="status-right">
+            <view class="info-item">
+              <view class="info-val">{{totalInventory}}</view>
+              <view class="info-lab">在库物品</view>
+            </view>
+            <view class="info-item">
+              <view class="info-val" style="color: #ff4757;">{{warningCount}}</view>
+              <view class="info-lab">临期提醒</view>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="section-title">
+        <text>在库类目</text>
+        <van-icon name="replay" bindtap="fetchData" size="20px" color="#333" />
+      </view>
+
+      <view class="fruit-list">
+        <block wx:for="{{groupedList}}" wx:key="fruitName">
+          <view class="item-card glass-box category-card" bindtap="goToDetail" data-name="{{item.fruitName}}">
+            
+            <image class="fruit-thumb" src="{{item.imageUrl}}" mode="aspectFit" />
+            
+            <view class="fruit-main">
+              <view class="name-row">
+                <text class="f-name">{{item.fruitName}}</text>
+              </view>
+              <view class="category-desc">
+                <text class="total-count">共 {{item.count}} 项</text>
+                <text class="hint-text">点击查看空间分布</text>
+              </view>
+            </view>
+
+            <view class="card-action">
+              <view class="warning-bell-inline" wx:if="{{item.warningSignal}}">
+                <van-icon name="bell" color="#ff4757" size="24px" class="bell-pulse" />
+              </view>
+              <van-icon name="arrow" color="#cbd5e1" size="20px" />
+            </view>
+
+          </view>
+        </block>
+      </view>
+    </block>
+  </view>
+</view>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartfridge.mapper.WeightLogMapper">
+
+    <select id="getTotalConsumption" resultType="java.lang.Float">
+        SELECT SUM(weight_diff) FROM weight_log
+        WHERE device_id = #{deviceId}
+          AND log_time >= #{startTime}
+          AND log_time &lt; #{endTime}
+    </select>
+
+    <select id="getLogsByDeviceAndTime" resultType="com.smartfridge.entity.InventoryLog">
+        SELECT * FROM weight_log
+        WHERE device_id = #{deviceId}
+          AND log_time >= #{startTime}
+        ORDER BY log_time ASC
+    </select>
+
+    <select id="existsByMsgId" resultType="java.lang.Boolean">
+        SELECT EXISTS(SELECT 1 FROM weight_log WHERE msg_id = #{msgId})
+    </select>
+
+</mapper>

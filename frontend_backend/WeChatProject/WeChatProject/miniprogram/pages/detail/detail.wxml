@@ -1,0 +1,68 @@
+<view class="page-container">
+  <view class="header-section">
+    <view class="main-title">{{fruitName}} 分布雷达</view>
+    <view class="sub-title">共识别到 {{fruitInstances.length}} 个目标实体</view>
+  </view>
+
+  <view class="glass-box map-card">
+    <view class="fridge-container">
+      <view class="fridge-bg"></view>
+      
+      <view
+        class="fruit-pin {{item.isExpiring ? 'pin-warning' : ''}}"
+        wx:for="{{fruitInstances}}"
+        wx:key="inventoryId"
+        style="left: {{item.leftPct}}%; top: {{item.topPct}}%;"
+      >
+        <block wx:if="{{item.isBagged}}">
+          <view class="pin-bag"></view>
+        </block>
+        <block wx:else>
+          <view class="pin-dot"></view>
+        </block>
+        <view class="pin-label">{{item.displayName}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section-title">实时状态追踪</view>
+  <view class="list-container">
+    <block wx:for="{{fruitInstances}}" wx:key="inventoryId">
+      <view class="glass-box detail-card">
+        <view class="detail-header">
+          <view class="name-box">
+            <text class="fruit-id">{{item.displayName}}</text>
+            <text class="status-tag" wx:if="{{item.isExpiring}}">临期警告</text>
+          </view>
+          <view class="coord-text">{{item.locationLabel}}</view>
+        </view>
+
+        <view class="detail-info">
+          <view class="info-row">
+            <text class="label">冰箱位置</text>
+            <text class="value">{{item.locationLabel}}</text>
+          </view>
+          <view class="info-row">
+            <text class="label">视觉坐标</text>
+            <text class="value muted">({{item.rawX}}, {{item.rawY}})</text>
+          </view>
+          <view class="info-row">
+            <text class="label">新鲜度评估</text>
+            <text class="value" style="color: {{item.isExpiring ? '#ff4757' : '#27ae60'}}">{{item.freshness}}%</text>
+          </view>
+          <van-progress 
+            percentage="{{item.freshness}}" 
+            stroke-width="8px" 
+            color="linear-gradient(to right, #ff4757, #f1c40f, #27ae60)" 
+            show-pivot="{{false}}" 
+          />
+          
+          <view class="info-row time-row">
+            <text class="label">预期彻底过期时间</text>
+            <text class="value">{{item.expireTime}}</text>
+          </view>
+        </view>
+      </view>
+    </block>
+  </view>
+</view>

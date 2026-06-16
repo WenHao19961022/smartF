@@ -1,0 +1,10 @@
+{
+  "navigationBarTitleText": "搜索并绑定设备",
+  "backgroundColor": "#d9eff7",
+  "usingComponents": {
+    "van-search": "@vant/weapp/search/index",
+    "van-icon": "@vant/weapp/icon/index",
+    "van-button": "@vant/weapp/button/index",
+    "van-empty": "@vant/weapp/empty/index"
+  }
+}

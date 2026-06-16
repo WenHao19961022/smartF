@@ -252,10 +252,10 @@ std::string FruitTypeToString(FruitType type) {
 
 uint8_t FreshnessLevelToScore(FreshnessLevel level) {
     switch (level) {
-        case FreshnessLevel::Fresh: return 10;
-        case FreshnessLevel::Stale: return 5;
-        case FreshnessLevel::Rotten: return 0;
-        default: return 8;
+        case FreshnessLevel::Fresh: return 90;
+        case FreshnessLevel::Stale: return 60;
+        case FreshnessLevel::Rotten: return 15;
+        default: return 50;
     }
 }
 
@@ -321,7 +321,9 @@ std::string SerializeMqttMessageToJson(const MqttMessageStruct& message) {
         json << "      \"fresh_status\": " << static_cast<int>(FreshnessLevelToScore(message.fruits[i].freshness)) << ",\n";
         json << "      \"put_in_time\": \"" << FormatTimestamp(message.fruits[i].putInTime) << "\",\n";
         json << "      \"weight\": " << std::fixed << std::setprecision(1)
-             << static_cast<double>(message.fruits[i].weight) << "\n";
+             << static_cast<double>(message.fruits[i].weight) << ",\n";
+        json << "      \"coordinate_x\": " << static_cast<int>(message.fruits[i].locationX) << ",\n";
+        json << "      \"coordinate_y\": " << static_cast<int>(message.fruits[i].locationY) << "\n";
         json << "    }";
 
         if (i < message.fruitCount - 1) {

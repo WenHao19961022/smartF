@@ -333,6 +333,10 @@ void CoreManager::HandleDoorClose() {
     StaticRecognitionResult stat = GetStaticRecognitionResult();
 
     uint16_t finalStableWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
+    uint32_t closeTsMs = GetCurrentTimeMs();
+    if (mWeightStream.empty() || mWeightStream.back().timestampMs != closeTsMs) {
+        mWeightStream.push_back({closeTsMs, finalStableWeight});
+    }
 
     std::map<FruitType, int32_t> draftWeightDelta;
     std::map<FruitType, int32_t> dynCountDelta;
@@ -344,7 +348,7 @@ void CoreManager::HandleDoorClose() {
             return a.timestamp < b.timestamp;
         });
 
-        // 将间隔小于 800ms 的动作聚类为同一组
+        // 将间隔小于 800ms 的动作聚类为同一组；动态事件时间戳与重量流均为毫秒低32位
         std::vector<std::vector<FruitChangeEvent>> clusters;
         for (const auto& ev : events) {
             if (clusters.empty() || (ev.timestamp - clusters.back().back().timestamp > 800)) {
@@ -406,6 +410,8 @@ void CoreManager::HandleDoorClose() {
         if (it != avgWeights.end()) avgW = it->second;
         msg.fruits[i].weight = (avgW > 0) ? static_cast<uint32_t>(avgW) : 0;
         msg.fruits[i].putInTime = flatStock[i].putInTimestamp;
+        msg.fruits[i].locationX = static_cast<uint8_t>(std::min<uint16_t>(255, flatStock[i].locationX));
+        msg.fruits[i].locationY = static_cast<uint8_t>(std::min<uint16_t>(255, flatStock[i].locationY));
     }
 
     LOG_DATA("MQTT msg built: msgId=" << msg.messageId
@@ -501,6 +507,8 @@ void CoreManager::ProcessStaticResultOnly() {
         if (it != avgWeights.end()) avgW = it->second;
         mqttMsg.fruits[i].weight = (avgW > 0) ? static_cast<uint32_t>(avgW) : 0;
         mqttMsg.fruits[i].putInTime = flattened[i].putInTimestamp;
+        mqttMsg.fruits[i].locationX = static_cast<uint8_t>(std::min<uint16_t>(255, flattened[i].locationX));
+        mqttMsg.fruits[i].locationY = static_cast<uint8_t>(std::min<uint16_t>(255, flattened[i].locationY));
     }
 
     LOG_DATA("MQTT msg built (static timer): msgId=" << mqttMsg.messageId

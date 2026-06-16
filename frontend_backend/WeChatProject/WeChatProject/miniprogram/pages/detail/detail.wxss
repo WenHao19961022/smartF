@@ -1,0 +1,110 @@
+/* 全局基础样式复用 */
+.page-container { padding: 30rpx; background: linear-gradient(180deg, #d9eff7 0%, #f4f6f3 100%); min-height: 100vh; box-sizing: border-box; }
+.glass-box { background: rgba(255, 255, 255, 0.45) !important; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); border: 1px solid rgba(255, 255, 255, 0.6); border-radius: 40rpx; padding: 30rpx; margin-bottom: 30rpx; }
+.section-title { font-size: 34rpx; font-weight: bold; margin: 40rpx 10rpx 20rpx; color: #333; }
+
+/* 头部标题区 */
+.header-section { text-align: center; margin-bottom: 30rpx; }
+.main-title { font-size: 40rpx; font-weight: bold; color: #2c3e50; }
+.sub-title { font-size: 24rpx; color: #7f8c8d; margin-top: 10rpx; }
+
+/* --- 冰箱地图核心样式 --- */
+.map-card { padding: 20rpx; }
+.fridge-container { 
+  position: relative; 
+  width: 100%; 
+  height: 600rpx; /* 根据实际冰箱比例可调整高度 */
+  background: rgba(255, 255, 255, 0.3); 
+  border: 6rpx solid #b2bec3; 
+  border-radius: 20rpx; 
+  overflow: hidden; 
+}
+/* 模拟冰箱内部的横向隔板 */
+.fridge-bg { 
+  position: absolute; 
+  width: 100%; 
+  height: 100%; 
+  background-image:
+    linear-gradient(90deg, rgba(178, 190, 195, 0.25) 2rpx, transparent 2rpx),
+    linear-gradient(rgba(178, 190, 195, 0.5) 2rpx, transparent 2rpx); 
+  background-size: 33.33% 100%, 100% 33.33%; /* 分为九宫格 */
+}
+/* 定位点：通过 js 传入的 left 和 top 进行绝对定位 */
+.fruit-pin { 
+  position: absolute; 
+  transform: translate(-50%, -50%); /* 让原点在元素的正中心 */
+  display: flex; 
+  flex-direction: column; 
+  align-items: center; 
+  z-index: 10; 
+  transition: all 0.3s ease;
+}
+.pin-dot {
+  width: 28rpx;
+  height: 28rpx;
+  background-color: #27ae60;
+  border-radius: 50%;
+  border: 4rpx solid #fff;
+  box-shadow: 0 4rpx 10rpx rgba(0,0,0,0.3);
+}
+/* 袋装水果地图标记
+   不用 <image> 标签，用 view + CSS background-image。
+   原因：<image> 在真机上可能把 /images/... 当网络 URL 请求导致 [object Object] 报错。
+   设计：圆角方形 + 暖色底，和原圆点的圆形形成形状对比，区别度高。 */
+.pin-bag {
+  width: 56rpx;
+  height: 56rpx;
+  background-color: rgba(243, 156, 18, 0.18);  /* 浅橙黄底（袋子的常用色） */
+  border: 3rpx solid #fff;
+  border-radius: 12rpx;                          /* 圆角方形 vs 圆点的圆形 */
+  box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.15);
+  background-image: url('/images/fruits/bagged_fruit.png');
+  background-size: 60%;
+  background-repeat: no-repeat;
+  background-position: center;
+  transition: all 0.3s ease;
+}
+/* 临期时袋子变红 + 缩放呼吸
+   底色变红 + 红光晕 + 图片 hue-rotate（依赖原图主色，长期方案是出红色版素材） */
+.pin-warning .pin-bag {
+  background-color: rgba(255, 71, 87, 0.18);
+  filter: drop-shadow(0 0 6rpx rgba(255, 71, 87, 0.7)) hue-rotate(140deg) saturate(4);
+  animation: pulse-bag 1.5s infinite;
+}
+/* 临期水果地图红点警告 */
+.pin-warning .pin-dot { background-color: #ff4757; animation: pulse 1.5s infinite; }
+.pin-label { 
+  font-size: 20rpx; 
+  color: #fff; 
+  background: rgba(0,0,0,0.6); 
+  padding: 4rpx 12rpx; 
+  border-radius: 8rpx; 
+  margin-top: 8rpx; 
+  white-space: nowrap; 
+}
+
+/* --- 个体详情卡片 --- */
+.detail-card { padding: 35rpx; }
+.detail-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2rpx dashed rgba(0,0,0,0.1); padding-bottom: 20rpx; margin-bottom: 20rpx; }
+.name-box { display: flex; align-items: center; }
+.fruit-id { font-size: 32rpx; font-weight: bold; color: #2c3e50; margin-right: 15rpx; }
+.status-tag { background: #ff4757; color: #fff; font-size: 20rpx; padding: 4rpx 12rpx; border-radius: 8rpx; }
+.coord-text { font-size: 24rpx; color: #95a5a6; font-family: monospace; }
+.info-row { display: flex; justify-content: space-between; font-size: 28rpx; margin-bottom: 15rpx; }
+.label { color: #7f8c8d; }
+.value { font-weight: bold; }
+.muted { color: #94a3b8; font-family: monospace; }
+.time-row { margin-top: 25rpx; }
+
+/* 呼吸灯动画 */
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 71, 87, 0.7); }
+  70% { box-shadow: 0 0 0 15rpx rgba(255, 71, 87, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 71, 87, 0); }
+}
+/* 袋子呼吸动画（缩放） */
+@keyframes pulse-bag {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}

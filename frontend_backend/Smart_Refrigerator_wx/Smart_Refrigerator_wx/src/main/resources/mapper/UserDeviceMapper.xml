@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smartfridge.mapper.UserDeviceMapper">
+
+    <select id="getUsersByDeviceSn" resultType="com.smartfridge.entity.UserDevice">
+        SELECT * FROM user_device WHERE device_sn = #{deviceSn}
+    </select>
+
+    <select id="getDevicesByOpenid" resultType="com.smartfridge.entity.UserDevice">
+        SELECT * FROM user_device WHERE openid = #{openid}
+    </select>
+
+    <select id="getDevicesCNListByOpenid" resultType="String">
+        SELECT device_sn FROM user_device WHERE openid = #{openid}
+    </select>
+
+</mapper>
