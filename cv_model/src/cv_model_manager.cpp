@@ -110,12 +110,20 @@ static std::vector<FruitInfo> PostProcessYOLO(
     int numProposals = outputDims[2];
     int numClasses = outputDims[1] - 4;
 
-    const int kNumFruitClasses = 6;
+    struct ClassMapping {
+        const char* label;
+        FruitType fruitType;
+        FreshnessLevel freshness;
+    };
 
-    // --- ADDED: Define class labels mapping ---
-    const std::vector<std::string> class_labels = {
-        "fresh_apple", "fresh_banana", "fresh_orange", 
-        "rotten_apple", "rotten_banana", "rotten_orange"
+    const std::vector<ClassMapping> classMappings = {
+        {"fresh_apple", FruitType::Apple, FreshnessLevel::Fresh},
+        {"fresh_banana", FruitType::Banana, FreshnessLevel::Fresh},
+        {"fresh_orange", FruitType::Orange, FreshnessLevel::Fresh},
+        {"rotten_apple", FruitType::Apple, FreshnessLevel::Rotten},
+        {"rotten_banana", FruitType::Banana, FreshnessLevel::Rotten},
+        {"rotten_orange", FruitType::Orange, FreshnessLevel::Rotten},
+        {"plastic_bag", FruitType::PlasticBag, FreshnessLevel::Fresh}
     };
 
     struct Detection {
@@ -134,7 +142,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
         float maxConf = 0.0f;
         int maxClassId = 0;
 
-        for (int c = 0; c < std::min(numClasses, kNumFruitClasses); ++c) {
+        for (int c = 0; c < std::min(numClasses, static_cast<int>(classMappings.size())); ++c) {
             float conf = output[(4 + c) * numProposals + i];
             if (conf > maxConf) {
                 maxConf = conf;
@@ -160,14 +168,18 @@ static std::vector<FruitInfo> PostProcessYOLO(
         const auto& det = detections[i];
         
         // --- ADDED: Print [ID] Label directly to terminal ---
-        std::string label_name = (det.classId < class_labels.size()) ? class_labels[det.classId] : "Unknown";
+        std::string label_name = (det.classId < static_cast<int>(classMappings.size())) ? classMappings[det.classId].label : "Unknown";
         std::cout << "[" << det.classId << "] " << label_name << std::endl;
 
+        if (det.classId < 0 || det.classId >= static_cast<int>(classMappings.size())) {
+            continue;
+        }
+
         FruitInfo info;
-        info.fruitType = static_cast<FruitType>(det.classId + 1);
+        info.fruitType = classMappings[det.classId].fruitType;
         info.locationX = static_cast<uint8_t>(std::min(255, static_cast<int>(det.cx)));
         info.locationY = static_cast<uint8_t>(std::min(255, static_cast<int>(det.cy)));
-        info.freshness = FreshnessLevel::Fresh;
+        info.freshness = classMappings[det.classId].freshness;
 
         results.push_back(info);
 
@@ -192,7 +204,7 @@ void CvModelManager::StaticRecognitionInternal() {
     LOG_PRINT("[CvModel]", "=== StaticRecognitionInternal START ===");
     SetStaticRecognitionStatus(kRecognitionBusy);
 
-    std::map<std::tuple<FruitType, uint8_t, uint8_t>, int> fruitCounts;
+    std::map<std::tuple<FruitType, uint8_t, uint8_t, FreshnessLevel>, int> fruitCounts;
     StaticRecognitionResult result = {};
     result.timestamp = static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::seconds>(
@@ -214,9 +226,10 @@ void CvModelManager::StaticRecognitionInternal() {
             if (mInferenceEngine->Infer(frame, rawOutput)) {
                 auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
                 for (const auto& det : detections) {
-                    auto key = std::make_tuple(det.fruitType, det.locationX, det.locationY);
+                    auto key = std::make_tuple(det.fruitType, det.locationX, det.locationY, det.freshness);
                     LOG_PRINT("[CvModel]", "  Detection " << detectionIndex << ": type=" << (int)det.fruitType
-                              << " pos=(" << (int)det.locationX << "," << (int)det.locationY << ")");
+                              << " pos=(" << (int)det.locationX << "," << (int)det.locationY << ")"
+                              << " freshness=" << (int)det.freshness);
                     fruitCounts[key]++;
                 }
                 successfulDetections++;
@@ -236,8 +249,7 @@ void CvModelManager::StaticRecognitionInternal() {
     for (const auto& pair : fruitCounts) {
         if (pair.second >= kStaticConfirmThreshold) {
             FruitInfo info;
-            std::tie(info.fruitType, info.locationX, info.locationY) = pair.first;
-            info.freshness = FreshnessLevel::Fresh;
+            std::tie(info.fruitType, info.locationX, info.locationY, info.freshness) = pair.first;
             finalDetections.push_back(info);
         }
     }

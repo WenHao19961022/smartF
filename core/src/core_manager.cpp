@@ -405,6 +405,7 @@ void CoreManager::HandleDoorClose() {
         auto it = avgWeights.find(flatStock[i].type);
         if (it != avgWeights.end()) avgW = it->second;
         msg.fruits[i].weight = (avgW > 0) ? static_cast<uint32_t>(avgW) : 0;
+        msg.fruits[i].putInTime = flatStock[i].putInTimestamp;
     }
 
     LOG_DATA("MQTT msg built: msgId=" << msg.messageId
@@ -499,6 +500,7 @@ void CoreManager::ProcessStaticResultOnly() {
         auto it = avgWeights.find(flattened[i].type);
         if (it != avgWeights.end()) avgW = it->second;
         mqttMsg.fruits[i].weight = (avgW > 0) ? static_cast<uint32_t>(avgW) : 0;
+        mqttMsg.fruits[i].putInTime = flattened[i].putInTimestamp;
     }
 
     LOG_DATA("MQTT msg built (static timer): msgId=" << mqttMsg.messageId

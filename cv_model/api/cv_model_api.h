@@ -14,7 +14,8 @@ enum class FruitType : uint8_t {
     Orange = 3,
     Grape  = 4,
     Pear   = 5,
-    Mango  = 6
+    Mango  = 6,
+    PlasticBag = 7
 };
 
 enum class FreshnessLevel : uint8_t {

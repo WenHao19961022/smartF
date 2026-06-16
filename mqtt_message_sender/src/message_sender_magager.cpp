@@ -182,7 +182,8 @@ bool MessageSenderManager::SendMessage(const MqttMessageStruct& message) {
             LOG_PRINT("[Mqtt]", "  Fruit[" << (int)i << "]: id=" << message.fruits[i].id
                       << " type=" << (int)message.fruits[i].type
                       << " freshness=" << (int)message.fruits[i].freshness
-                      << " weight=" << message.fruits[i].weight << "g");
+                      << " weight=" << message.fruits[i].weight << "g"
+                      << " putInTime=" << message.fruits[i].putInTime);
         }
         return true;
 
@@ -318,6 +319,7 @@ std::string SerializeMqttMessageToJson(const MqttMessageStruct& message) {
         json << "      \"id\": " << static_cast<int>(message.fruits[i].id) << ",\n";
         json << "      \"type\": \"" << FruitTypeToString(message.fruits[i].type) << "\",\n";
         json << "      \"fresh_status\": " << static_cast<int>(FreshnessLevelToScore(message.fruits[i].freshness)) << ",\n";
+        json << "      \"put_in_time\": \"" << FormatTimestamp(message.fruits[i].putInTime) << "\",\n";
         json << "      \"weight\": " << std::fixed << std::setprecision(1)
              << static_cast<double>(message.fruits[i].weight) << "\n";
         json << "    }";
