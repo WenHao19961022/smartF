@@ -117,8 +117,8 @@ void MessageReceverManager::Init() {
     LOG_PRINT("[Stm32]", "  - serial_port: " << mSerialPort);
     LOG_PRINT("[Stm32]", "  - baudrate: " << mBaudrate);
     LOG_PRINT("[Stm32]", "  - weight_threshold: " << mWeightChangeThreshold << "g");
-    LOG_PRINT("[Stm32]", "  - temperature_threshold: " << mTemperatureChangeThreshold << " (raw units)");
-    LOG_PRINT("[Stm32]", "  - humidity_threshold: " << mHumidityChangeThreshold << " (raw units)");
+    LOG_PRINT("[Stm32]", "  - temperature_threshold: " << mTemperatureChangeThreshold << "C");
+    LOG_PRINT("[Stm32]", "  - humidity_threshold: " << mHumidityChangeThreshold << "%");
 
     // 初始化串口
     LOG_PRINT("[Stm32]", "Attempting to open serial port...");
@@ -143,8 +143,8 @@ void MessageReceverManager::MainLoop() {
         loopCount++;
         if (loopCount % 100 == 0) {
             LOG_PRINT("[Stm32]", "MainLoop heartbeat #" << loopCount
-                      << " | latest: temp=" << (latestInfo.info.temperature / 10.0) << "C"
-                      << " humidity=" << (latestInfo.info.humidity / 10.0) << "%"
+                      << " | latest: temp=" << latestInfo.info.temperature << "C"
+                      << " humidity=" << latestInfo.info.humidity << "%"
                       << " weight=" << latestInfo.info.weight << "g"
                       << " door=" << (int)latestInfo.info.doorStatus);
         }
@@ -329,8 +329,8 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
                  - static_cast<int>(newInfo.info.humidity));
     if (humidityDiff > mHumidityChangeThreshold) {
         LOG_PRINT("[Stm32]", "[HISTORY UPDATE] Humidity CHANGED: "
-                  << (mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1] / 10.0) << "% -> "
-                  << (newInfo.info.humidity / 10.0) << "%"
+                  << mHistoryInfo.humidity[kFridgeHistoryInfoSize - 1] << "% -> "
+                  << newInfo.info.humidity << "%"
                   << " (diff=" << humidityDiff << " > threshold=" << mHumidityChangeThreshold << ")");
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.humidityTimestamp[i] = mHistoryInfo.humidityTimestamp[i + 1];
@@ -345,8 +345,8 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
                  - static_cast<int>(newInfo.info.temperature));
     if (tempDiff > mTemperatureChangeThreshold) {
         LOG_PRINT("[Stm32]", "[HISTORY UPDATE] Temperature CHANGED: "
-                  << (mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1] / 10.0) << "C -> "
-                  << (newInfo.info.temperature / 10.0) << "C"
+                  << mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1] << "C -> "
+                  << newInfo.info.temperature << "C"
                   << " (diff=" << tempDiff << " > threshold=" << mTemperatureChangeThreshold << ")");
         for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
             mHistoryInfo.temperatureTimestamp[i] = mHistoryInfo.temperatureTimestamp[i + 1];
@@ -383,8 +383,8 @@ void MessageReceverManager::StartMockMode(int doorOpenDurationSec, int doorClose
     {
         std::lock_guard<std::mutex> lock(mDataMutex);
         for (int i = 0; i < kFridgeHistoryInfoSize; ++i) {
-            mHistoryInfo.temperature[i] = 50;  // 5.0°C
-            mHistoryInfo.humidity[i] = 600;    // 60.0%
+            mHistoryInfo.temperature[i] = 5;   // 5°C
+            mHistoryInfo.humidity[i] = 60;     // 60%
             mHistoryInfo.weight[i] = 5000;     // 5000g
             mHistoryInfo.doorStatus[i] = DoorStatus::DoorClosed;
             mHistoryInfo.temperatureTimestamp[i] = static_cast<uint32_t>(std::time(nullptr));
@@ -425,11 +425,11 @@ void MessageReceverManager::MockThreadFunc(int doorOpenDurationSec, int doorClos
         FrigeratorInfoWithTimestamp mockInfo;
         mockInfo.timestamp = static_cast<uint32_t>(std::time(nullptr));
 
-        // 模拟温度波动（4.5°C ~ 5.5°C）
-        mockInfo.info.temperature = 45 + (rand() % 11);
+        // 模拟温度波动（4°C ~ 6°C）
+        mockInfo.info.temperature = 4 + (rand() % 3);
 
         // 模拟湿度波动（55% ~ 65%）
-        mockInfo.info.humidity = 550 + (rand() % 101);
+        mockInfo.info.humidity = 55 + (rand() % 11);
 
         // 门状态和重量
         mockInfo.info.doorStatus = currentDoorStatus;
@@ -441,8 +441,8 @@ void MessageReceverManager::MockThreadFunc(int doorOpenDurationSec, int doorClos
         LOG_PRINT("[Stm32-Mock]", "Cycle #" << cycleCount
                   << " | door=" << (currentDoorStatus == DoorStatus::DoorOpen ? "OPEN" : "CLOSED")
                   << " | weight=" << currentWeight << "g"
-                  << " | temp=" << (mockInfo.info.temperature / 10.0) << "C"
-                  << " | humidity=" << (mockInfo.info.humidity / 10.0) << "%");
+                  << " | temp=" << mockInfo.info.temperature << "C"
+                  << " | humidity=" << mockInfo.info.humidity << "%");
 
         // 等待当前状态持续时间
         int durationSec = (currentDoorStatus == DoorStatus::DoorOpen)

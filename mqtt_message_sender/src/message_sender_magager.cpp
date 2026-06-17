@@ -134,8 +134,8 @@ void MessageSenderManager::CopyMessage(const MqttMessageStruct& message) {
               << " | msgId=" << message.messageId
               << " | time=" << message.time
               << " | fruitCount=" << (int)message.fruitCount
-              << " | temp=" << (message.fridgeInfo.temperature / 10.0) << "C"
-              << " | humidity=" << (message.fridgeInfo.humidity / 10.0) << "%"
+              << " | temp=" << message.fridgeInfo.temperature << "C"
+              << " | humidity=" << message.fridgeInfo.humidity << "%"
               << " | weight=" << message.fridgeInfo.weight << "g"
               << " | door=" << (int)message.fridgeInfo.doorStatus);
 }
@@ -304,9 +304,9 @@ std::string SerializeMqttMessageToJson(const MqttMessageStruct& message) {
     // 冰箱信息
     json << "  \"refrigerator_info\": {\n";
     json << "    \"temperature\": " << std::fixed << std::setprecision(1)
-         << (message.fridgeInfo.temperature / 10.0) << ",\n";
+         << static_cast<double>(message.fridgeInfo.temperature) << ",\n";
     json << "    \"humidity\": " << std::fixed << std::setprecision(1)
-         << (message.fridgeInfo.humidity / 10.0) << "\n";
+         << static_cast<double>(message.fridgeInfo.humidity) << "\n";
     json << "  },\n";
 
     // 水果数量

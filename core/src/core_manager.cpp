@@ -221,8 +221,8 @@ void CoreManager::Run() {
         if (loopCount % 100 == 0) {
             LOG_INFO("[Core Run] heartbeat #" << loopCount
                      << " | door=" << (currentDoorState ? "OPEN" : "CLOSED")
-                     << " | temp=" << (currInfo.temperature[kFridgeHistoryInfoSize - 1] / 10.0) << "C"
-                     << " | humidity=" << (currInfo.humidity[kFridgeHistoryInfoSize - 1] / 10.0) << "%"
+                     << " | temp=" << currInfo.temperature[kFridgeHistoryInfoSize - 1] << "C"
+                     << " | humidity=" << currInfo.humidity[kFridgeHistoryInfoSize - 1] << "%"
                      << " | weight=" << currInfo.weight[kFridgeHistoryInfoSize - 1] << "g"
                      << " | staticWaiting=" << mIsStaticWaiting
                      << " | baseWeight=" << mBaseWeight << "g");
@@ -417,8 +417,8 @@ void CoreManager::HandleDoorClose() {
     LOG_DATA("MQTT msg built: msgId=" << msg.messageId
              << " | deviceId=" << msg.deviceId
              << " | fruitCount=" << (int)msg.fruitCount
-             << " | temp=" << (msg.fridgeInfo.temperature / 10.0) << "C"
-             << " | humidity=" << (msg.fridgeInfo.humidity / 10.0) << "%"
+             << " | temp=" << msg.fridgeInfo.temperature << "C"
+             << " | humidity=" << msg.fridgeInfo.humidity << "%"
              << " | weight=" << msg.fridgeInfo.weight << "g");
 
     bool sendResult = SendMqttMessage(msg);
@@ -514,8 +514,8 @@ void CoreManager::ProcessStaticResultOnly() {
     LOG_DATA("MQTT msg built (static timer): msgId=" << mqttMsg.messageId
              << " | deviceId=" << mqttMsg.deviceId
              << " | fruitCount=" << (int)mqttMsg.fruitCount
-             << " | temp=" << (mqttMsg.fridgeInfo.temperature / 10.0) << "C"
-             << " | humidity=" << (mqttMsg.fridgeInfo.humidity / 10.0) << "%"
+             << " | temp=" << mqttMsg.fridgeInfo.temperature << "C"
+             << " | humidity=" << mqttMsg.fridgeInfo.humidity << "%"
              << " | weight=" << mqttMsg.fridgeInfo.weight << "g");
 
     bool sendResult = SendMqttMessage(mqttMsg);

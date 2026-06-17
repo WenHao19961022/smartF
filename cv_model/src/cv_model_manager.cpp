@@ -116,8 +116,18 @@ static std::vector<FruitInfo> PostProcessYOLO(
         return results;
     }
 
-    int numProposals = outputDims[2];
-    int numClasses = outputDims[1] - 4;
+    const int dim1 = outputDims[1];
+    const int dim2 = outputDims[2];
+    const bool channelsFirst = dim1 < dim2;
+    const int channels = channelsFirst ? dim1 : dim2;
+    const int numProposals = channelsFirst ? dim2 : dim1;
+    const int numClasses = channels - 4;
+
+    if (numClasses <= 0) {
+        LOG_PRINT("[CvModel]", "Invalid YOLO output shape: ["
+                  << outputDims[0] << "," << dim1 << "," << dim2 << "]");
+        return results;
+    }
 
     struct ClassMapping {
         const char* label;
@@ -139,20 +149,30 @@ static std::vector<FruitInfo> PostProcessYOLO(
         float cx, cy, w, h;
         float confidence;
         int classId;
+        std::vector<float> classScores;
     };
     std::vector<Detection> detections;
 
+    auto readOutput = [&](int proposal, int channel) -> float {
+        if (channelsFirst) {
+            return output[channel * numProposals + proposal];
+        }
+        return output[proposal * channels + channel];
+    };
+
     for (int i = 0; i < numProposals; ++i) {
-        float cx = output[i];
-        float cy = output[numProposals + i];
-        float bw = output[2 * numProposals + i];
-        float bh = output[3 * numProposals + i];
+        float cx = readOutput(i, 0);
+        float cy = readOutput(i, 1);
+        float bw = readOutput(i, 2);
+        float bh = readOutput(i, 3);
 
         float maxConf = 0.0f;
         int maxClassId = 0;
+        std::vector<float> classScores(std::min(numClasses, static_cast<int>(classMappings.size())), 0.0f);
 
-        for (int c = 0; c < std::min(numClasses, static_cast<int>(classMappings.size())); ++c) {
-            float conf = output[(4 + c) * numProposals + i];
+        for (int c = 0; c < static_cast<int>(classScores.size()); ++c) {
+            float conf = readOutput(i, 4 + c);
+            classScores[c] = conf;
             if (conf > maxConf) {
                 maxConf = conf;
                 maxClassId = c;
@@ -160,7 +180,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
         }
 
         if (maxConf > confThreshold) {
-            detections.push_back({cx, cy, bw, bh, maxConf, maxClassId});
+            detections.push_back({cx, cy, bw, bh, maxConf, maxClassId, classScores});
         }
     }
 
@@ -178,7 +198,13 @@ static std::vector<FruitInfo> PostProcessYOLO(
         
         // --- ADDED: Print [ID] Label directly to terminal ---
         std::string label_name = (det.classId < static_cast<int>(classMappings.size())) ? classMappings[det.classId].label : "Unknown";
-        std::cout << "[" << det.classId << "] " << label_name << std::endl;
+        float freshAppleScore = det.classScores.size() > 0 ? det.classScores[0] : 0.0f;
+        float rottenAppleScore = det.classScores.size() > 3 ? det.classScores[3] : 0.0f;
+        std::cout << "[" << det.classId << "] " << label_name
+                  << " conf=" << det.confidence
+                  << " apple_scores(fresh=" << freshAppleScore
+                  << ", rotten=" << rottenAppleScore << ")"
+                  << std::endl;
 
         if (det.classId < 0 || det.classId >= static_cast<int>(classMappings.size())) {
             continue;
