@@ -17,6 +17,262 @@ static uint32_t NowEpochMs32() {
         std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
+struct FruitClassMapping {
+    const char* label;
+    FruitType fruitType;
+    FreshnessLevel freshness;
+};
+
+struct YoloDetection {
+    float cx, cy, w, h;
+    float confidence;
+    int classId;
+    std::vector<float> classScores;
+};
+
+struct BagCandidate {
+    cv::Rect rect;
+    float score;
+    const char* color;
+};
+
+static cv::Rect DetectionRect(const YoloDetection& det, const cv::Size& bounds) {
+    int x1 = std::max(0, static_cast<int>(std::round(det.cx - det.w * 0.5f)));
+    int y1 = std::max(0, static_cast<int>(std::round(det.cy - det.h * 0.5f)));
+    int x2 = std::min(bounds.width, static_cast<int>(std::round(det.cx + det.w * 0.5f)));
+    int y2 = std::min(bounds.height, static_cast<int>(std::round(det.cy + det.h * 0.5f)));
+    if (x2 <= x1 || y2 <= y1) {
+        return cv::Rect();
+    }
+    return cv::Rect(x1, y1, x2 - x1, y2 - y1);
+}
+
+static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetection& det) {
+    if (modelFrame.empty()) {
+        return 0.0f;
+    }
+
+    cv::Rect roi = DetectionRect(det, modelFrame.size());
+    if (roi.width < 12 || roi.height < 12) {
+        return 0.0f;
+    }
+
+    cv::Mat crop = modelFrame(roi);
+    cv::Mat hsv;
+    cv::cvtColor(crop, hsv, cv::COLOR_BGR2HSV);
+
+    int darkV = ConfigManager::GetInstance().GetInt("cv.rotten_dark_v_threshold", 80);
+    int darkS = ConfigManager::GetInstance().GetInt("cv.rotten_dark_s_threshold", 30);
+
+    cv::Mat darkMask;
+    cv::inRange(hsv, cv::Scalar(0, darkS, 0), cv::Scalar(180, 255, darkV), darkMask);
+
+    cv::Mat fruitColorMask;
+    cv::inRange(hsv, cv::Scalar(0, 35, 40), cv::Scalar(180, 255, 255), fruitColorMask);
+
+    cv::Mat fruitMask;
+    cv::bitwise_or(fruitColorMask, darkMask, fruitMask);
+
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+    cv::morphologyEx(darkMask, darkMask, cv::MORPH_OPEN, kernel);
+    cv::morphologyEx(fruitMask, fruitMask, cv::MORPH_CLOSE, kernel);
+
+    int fruitPixels = cv::countNonZero(fruitMask);
+    if (fruitPixels <= 0) {
+        return 0.0f;
+    }
+
+    int darkPixels = cv::countNonZero(darkMask);
+    return static_cast<float>(darkPixels) / static_cast<float>(fruitPixels);
+}
+
+static float RectIoU(const cv::Rect& a, const cv::Rect& b) {
+    int interArea = (a & b).area();
+    int unionArea = a.area() + b.area() - interArea;
+    return unionArea > 0 ? static_cast<float>(interArea) / static_cast<float>(unionArea) : 0.0f;
+}
+
+static uint8_t ToLocationByte(float modelCoord, float modelSize = 640.0f) {
+    if (!std::isfinite(modelCoord) || modelSize <= 0.0f) {
+        return 0;
+    }
+    float clamped = std::max(0.0f, std::min(modelSize, modelCoord));
+    int scaled = static_cast<int>(std::round(clamped * 255.0f / modelSize));
+    return static_cast<uint8_t>(std::max(0, std::min(255, scaled)));
+}
+
+static bool AcceptBagContour(
+    const std::vector<cv::Point>& contour,
+    const cv::Mat& mask,
+    float minAreaRatio,
+    float maxAreaRatio,
+    cv::Rect& rect,
+    float& fillRatio)
+{
+    double area = cv::contourArea(contour);
+    double frameArea = static_cast<double>(mask.rows * mask.cols);
+    if (frameArea <= 0.0) {
+        return false;
+    }
+
+    double areaRatio = area / frameArea;
+    if (areaRatio < minAreaRatio || areaRatio > maxAreaRatio) {
+        return false;
+    }
+
+    rect = cv::boundingRect(contour);
+    if (rect.width < 30 || rect.height < 30) {
+        return false;
+    }
+
+    double aspect = static_cast<double>(rect.width) / static_cast<double>(rect.height);
+    if (aspect < 0.25 || aspect > 4.0) {
+        return false;
+    }
+
+    fillRatio = static_cast<float>(area / static_cast<double>(rect.area()));
+    return fillRatio >= 0.12f;
+}
+
+static void AddBagCandidate(std::vector<BagCandidate>& bags, const BagCandidate& candidate) {
+    for (auto& bag : bags) {
+        if (RectIoU(bag.rect, candidate.rect) > 0.35f) {
+            if (candidate.score > bag.score) {
+                bag = candidate;
+            }
+            return;
+        }
+    }
+    bags.push_back(candidate);
+}
+
+static bool OverlapsKnownFruit(const cv::Rect& candidate, const std::vector<cv::Rect>& fruitRects) {
+    int candidateArea = candidate.area();
+    if (candidateArea <= 0) {
+        return true;
+    }
+
+    for (const auto& fruitRect : fruitRects) {
+        int interArea = (candidate & fruitRect).area();
+        if (interArea <= 0) {
+            continue;
+        }
+        float candidateOverlap = static_cast<float>(interArea) / static_cast<float>(candidateArea);
+        if (RectIoU(candidate, fruitRect) > 0.25f || candidateOverlap > 0.55f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
+    const cv::Mat& frame,
+    const std::vector<cv::Rect>& fruitRects)
+{
+    std::vector<FruitInfo> results;
+    if (frame.empty() || !ConfigManager::GetInstance().GetBool("cv.bag_detect_enable", true)) {
+        return results;
+    }
+
+    cv::Mat modelFrame;
+    cv::resize(frame, modelFrame, cv::Size(640, 640));
+
+    cv::Mat hsv;
+    cv::cvtColor(modelFrame, hsv, cv::COLOR_BGR2HSV);
+
+    float maxAreaRatio = ConfigManager::GetInstance().GetFloat("cv.bag_max_area_ratio", 0.45f);
+    std::vector<BagCandidate> candidates;
+
+    cv::Mat redLow;
+    cv::Mat redHigh;
+    cv::Mat redMask;
+    int redSMin = ConfigManager::GetInstance().GetInt("cv.bag_red_s_min", 70);
+    int redVMin = ConfigManager::GetInstance().GetInt("cv.bag_red_v_min", 50);
+    cv::inRange(hsv, cv::Scalar(0, redSMin, redVMin), cv::Scalar(12, 255, 255), redLow);
+    cv::inRange(hsv, cv::Scalar(168, redSMin, redVMin), cv::Scalar(180, 255, 255), redHigh);
+    cv::bitwise_or(redLow, redHigh, redMask);
+
+    cv::Mat redKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
+    cv::morphologyEx(redMask, redMask, cv::MORPH_OPEN, redKernel);
+    cv::morphologyEx(redMask, redMask, cv::MORPH_CLOSE, redKernel);
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(redMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    float redMinArea = ConfigManager::GetInstance().GetFloat("cv.bag_red_min_area_ratio", 0.01f);
+    for (const auto& contour : contours) {
+        cv::Rect rect;
+        float fillRatio = 0.0f;
+        if (AcceptBagContour(contour, redMask, redMinArea, maxAreaRatio, rect, fillRatio)) {
+            if (OverlapsKnownFruit(rect, fruitRects)) {
+                continue;
+            }
+            AddBagCandidate(candidates, {rect, fillRatio, "red"});
+        }
+    }
+
+    int whiteSMax = ConfigManager::GetInstance().GetInt("cv.bag_white_s_max", 55);
+    int whiteVMin = ConfigManager::GetInstance().GetInt("cv.bag_white_v_min", 135);
+    float whiteMinArea = ConfigManager::GetInstance().GetFloat("cv.bag_white_min_area_ratio", 0.02f);
+    float whiteEdgeRatioMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_edge_ratio_min", 0.015f);
+
+    cv::Mat whiteMask;
+    cv::inRange(hsv, cv::Scalar(0, 0, whiteVMin), cv::Scalar(180, whiteSMax, 255), whiteMask);
+
+    cv::Mat whiteKernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
+    cv::morphologyEx(whiteMask, whiteMask, cv::MORPH_OPEN, whiteKernel);
+    cv::morphologyEx(whiteMask, whiteMask, cv::MORPH_CLOSE, whiteKernel);
+
+    cv::Mat gray;
+    cv::Mat edges;
+    cv::cvtColor(modelFrame, gray, cv::COLOR_BGR2GRAY);
+    cv::Canny(gray, edges, 60, 140);
+
+    contours.clear();
+    cv::findContours(whiteMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    for (const auto& contour : contours) {
+        cv::Rect rect;
+        float fillRatio = 0.0f;
+        if (!AcceptBagContour(contour, whiteMask, whiteMinArea, maxAreaRatio, rect, fillRatio)) {
+            continue;
+        }
+        if (OverlapsKnownFruit(rect, fruitRects)) {
+            continue;
+        }
+
+        cv::Mat contourMask = cv::Mat::zeros(whiteMask.size(), CV_8UC1);
+        std::vector<std::vector<cv::Point>> oneContour{contour};
+        cv::drawContours(contourMask, oneContour, 0, cv::Scalar(255), cv::FILLED);
+
+        cv::Mat contourEdges;
+        cv::bitwise_and(edges, contourMask, contourEdges);
+        int areaPixels = cv::countNonZero(contourMask);
+        float edgeRatio = areaPixels > 0
+            ? static_cast<float>(cv::countNonZero(contourEdges)) / static_cast<float>(areaPixels)
+            : 0.0f;
+        if (edgeRatio < whiteEdgeRatioMin) {
+            continue;
+        }
+
+        AddBagCandidate(candidates, {rect, edgeRatio + fillRatio * 0.1f, "white"});
+    }
+
+    for (const auto& candidate : candidates) {
+        FruitInfo info;
+        info.fruitType = FruitType::PlasticBag;
+        info.locationX = ToLocationByte(candidate.rect.x + candidate.rect.width * 0.5f);
+        info.locationY = ToLocationByte(candidate.rect.y + candidate.rect.height * 0.5f);
+        info.freshness = FreshnessLevel::Fresh;
+        results.push_back(info);
+        LOG_PRINT("[CvModel]", "  BagDetect color=" << candidate.color
+                  << " score=" << candidate.score
+                  << " rect=(" << candidate.rect.x << "," << candidate.rect.y
+                  << "," << candidate.rect.width << "," << candidate.rect.height << ")"
+                  << " pos=(" << (int)info.locationX << "," << (int)info.locationY << ")");
+    }
+
+    return results;
+}
+
 CvModelManager& CvModelManager::GetInstance() {
     static CvModelManager instance;
     return instance;
@@ -105,6 +361,7 @@ void CvModelManager::MainLoop() {
 // ==================== YOLO后处理 ====================
 // ==================== YOLO Post-Processing ====================
 static std::vector<FruitInfo> PostProcessYOLO(
+    const cv::Mat& frame,
     const std::vector<float>& output,
     const std::vector<int>& outputDims,
     float confThreshold = 0.5f,
@@ -129,13 +386,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
         return results;
     }
 
-    struct ClassMapping {
-        const char* label;
-        FruitType fruitType;
-        FreshnessLevel freshness;
-    };
-
-    const std::vector<ClassMapping> classMappings = {
+    const std::vector<FruitClassMapping> classMappings = {
         {"fresh_apple", FruitType::Apple, FreshnessLevel::Fresh},
         {"fresh_banana", FruitType::Banana, FreshnessLevel::Fresh},
         {"fresh_orange", FruitType::Orange, FreshnessLevel::Fresh},
@@ -145,13 +396,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
         {"plastic_bag", FruitType::PlasticBag, FreshnessLevel::Fresh}
     };
 
-    struct Detection {
-        float cx, cy, w, h;
-        float confidence;
-        int classId;
-        std::vector<float> classScores;
-    };
-    std::vector<Detection> detections;
+    std::vector<YoloDetection> detections;
 
     auto readOutput = [&](int proposal, int channel) -> float {
         if (channelsFirst) {
@@ -160,7 +405,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
         return output[proposal * channels + channel];
     };
 
-    auto calcIoU = [](const Detection& a, const Detection& b) -> float {
+    auto calcIoU = [](const YoloDetection& a, const YoloDetection& b) -> float {
         float ax1 = a.cx - a.w * 0.5f;
         float ay1 = a.cy - a.h * 0.5f;
         float ax2 = a.cx + a.w * 0.5f;
@@ -208,11 +453,12 @@ static std::vector<FruitInfo> PostProcessYOLO(
     }
 
     std::sort(detections.begin(), detections.end(),
-              [](const Detection& a, const Detection& b) {
+              [](const YoloDetection& a, const YoloDetection& b) {
                   return a.confidence > b.confidence;
               });
 
     std::vector<bool> suppressed(detections.size(), false);
+    std::vector<cv::Rect> acceptedFruitRects;
 
     // If there are detections, print a separator for this frame
     if (!detections.empty()) {
@@ -240,9 +486,32 @@ static std::vector<FruitInfo> PostProcessYOLO(
 
         FruitInfo info;
         info.fruitType = classMappings[det.classId].fruitType;
-        info.locationX = static_cast<uint8_t>(std::min(255, static_cast<int>(det.cx)));
-        info.locationY = static_cast<uint8_t>(std::min(255, static_cast<int>(det.cy)));
+        info.locationX = ToLocationByte(det.cx);
+        info.locationY = ToLocationByte(det.cy);
         info.freshness = classMappings[det.classId].freshness;
+        if (info.fruitType != FruitType::PlasticBag) {
+            cv::Rect fruitRect = DetectionRect(det, cv::Size(640, 640));
+            if (fruitRect.area() > 0) {
+                acceptedFruitRects.push_back(fruitRect);
+            }
+        }
+
+        if (ConfigManager::GetInstance().GetBool("cv.rotten_spot_enable", true)
+            && info.fruitType != FruitType::PlasticBag) {
+            cv::Mat modelFrame;
+            if (!frame.empty()) {
+                cv::resize(frame, modelFrame, cv::Size(640, 640));
+            }
+            float darkRatio = EstimateDarkSpotRatio(modelFrame, det);
+            float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.15f);
+            if (darkRatio >= rottenThreshold) {
+                info.freshness = FreshnessLevel::Rotten;
+            }
+            LOG_PRINT("[CvModel]", "  SpotCheck " << label_name
+                      << " darkRatio=" << darkRatio
+                      << " threshold=" << rottenThreshold
+                      << " freshness=" << (int)info.freshness);
+        }
 
         results.push_back(info);
 
@@ -259,6 +528,25 @@ static std::vector<FruitInfo> PostProcessYOLO(
             if (calcIoU(det, detections[j]) > nmsThreshold) {
                 suppressed[j] = true;
             }
+        }
+    }
+
+    auto bagDetections = DetectPlasticBagsOpenCV(frame, acceptedFruitRects);
+    for (const auto& bag : bagDetections) {
+        bool duplicate = false;
+        for (const auto& existing : results) {
+            if (existing.fruitType != FruitType::PlasticBag) {
+                continue;
+            }
+            int dx = static_cast<int>(existing.locationX) - static_cast<int>(bag.locationX);
+            int dy = static_cast<int>(existing.locationY) - static_cast<int>(bag.locationY);
+            if (std::sqrt(static_cast<float>(dx * dx + dy * dy)) < kDynamicPositionTolerance) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            results.push_back(bag);
         }
     }
 
@@ -296,7 +584,7 @@ void CvModelManager::StaticRecognitionInternal() {
         if (!frame.empty() && mInferenceEngine) {
             std::vector<float> rawOutput;
             if (mInferenceEngine->Infer(frame, rawOutput)) {
-                auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
+                auto detections = PostProcessYOLO(frame, rawOutput, mInferenceEngine->GetOutputDims());
                 std::vector<bool> used(fruitCandidates.size(), false);
                 for (const auto& det : detections) {
                     bool matched = false;
@@ -408,7 +696,7 @@ void CvModelManager::DynamicRecognitionLoop() {
             continue;
         }
 
-        auto detections = PostProcessYOLO(rawOutput, mInferenceEngine->GetOutputDims());
+        auto detections = PostProcessYOLO(frame, rawOutput, mInferenceEngine->GetOutputDims());
 
         {
             std::lock_guard<std::mutex> lock(mDynamicMutex);

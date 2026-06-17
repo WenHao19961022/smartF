@@ -35,6 +35,19 @@ ConfigManager::ConfigManager() {
     mConfig["cv.model_onnx_path"] = "cv_model/yolov8/yolov8s.onnx";
     mConfig["cv.conf_threshold"] = "0.5";
     mConfig["cv.nms_threshold"] = "0.4";
+    mConfig["cv.rotten_spot_enable"] = "1";
+    mConfig["cv.rotten_dark_ratio_threshold"] = "0.15";
+    mConfig["cv.rotten_dark_v_threshold"] = "80";
+    mConfig["cv.rotten_dark_s_threshold"] = "30";
+    mConfig["cv.bag_detect_enable"] = "1";
+    mConfig["cv.bag_red_s_min"] = "70";
+    mConfig["cv.bag_red_v_min"] = "50";
+    mConfig["cv.bag_red_min_area_ratio"] = "0.01";
+    mConfig["cv.bag_white_min_area_ratio"] = "0.02";
+    mConfig["cv.bag_max_area_ratio"] = "0.45";
+    mConfig["cv.bag_white_s_max"] = "55";
+    mConfig["cv.bag_white_v_min"] = "135";
+    mConfig["cv.bag_white_edge_ratio_min"] = "0.015";
 
     // 摄像头配置
     mConfig["camera.index"] = "0";
