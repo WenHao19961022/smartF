@@ -160,6 +160,29 @@ static std::vector<FruitInfo> PostProcessYOLO(
         return output[proposal * channels + channel];
     };
 
+    auto calcIoU = [](const Detection& a, const Detection& b) -> float {
+        float ax1 = a.cx - a.w * 0.5f;
+        float ay1 = a.cy - a.h * 0.5f;
+        float ax2 = a.cx + a.w * 0.5f;
+        float ay2 = a.cy + a.h * 0.5f;
+        float bx1 = b.cx - b.w * 0.5f;
+        float by1 = b.cy - b.h * 0.5f;
+        float bx2 = b.cx + b.w * 0.5f;
+        float by2 = b.cy + b.h * 0.5f;
+
+        float interX1 = std::max(ax1, bx1);
+        float interY1 = std::max(ay1, by1);
+        float interX2 = std::min(ax2, bx2);
+        float interY2 = std::min(ay2, by2);
+        float interW = std::max(0.0f, interX2 - interX1);
+        float interH = std::max(0.0f, interY2 - interY1);
+        float interArea = interW * interH;
+        float areaA = std::max(0.0f, ax2 - ax1) * std::max(0.0f, ay2 - ay1);
+        float areaB = std::max(0.0f, bx2 - bx1) * std::max(0.0f, by2 - by1);
+        float unionArea = areaA + areaB - interArea;
+        return unionArea > 0.0f ? interArea / unionArea : 0.0f;
+    };
+
     for (int i = 0; i < numProposals; ++i) {
         float cx = readOutput(i, 0);
         float cy = readOutput(i, 1);
@@ -183,6 +206,11 @@ static std::vector<FruitInfo> PostProcessYOLO(
             detections.push_back({cx, cy, bw, bh, maxConf, maxClassId, classScores});
         }
     }
+
+    std::sort(detections.begin(), detections.end(),
+              [](const Detection& a, const Detection& b) {
+                  return a.confidence > b.confidence;
+              });
 
     std::vector<bool> suppressed(detections.size(), false);
 
@@ -220,13 +248,15 @@ static std::vector<FruitInfo> PostProcessYOLO(
 
         // NMS logic
         for (size_t j = i + 1; j < detections.size(); ++j) {
-            if (suppressed[j] || detections[j].classId != det.classId) continue;
+            if (suppressed[j]) continue;
+            if (detections[j].classId < 0 || detections[j].classId >= static_cast<int>(classMappings.size())) {
+                continue;
+            }
+            if (classMappings[detections[j].classId].fruitType != classMappings[det.classId].fruitType) {
+                continue;
+            }
 
-            float dx = det.cx - detections[j].cx;
-            float dy = det.cy - detections[j].cy;
-            float dist = std::sqrt(dx * dx + dy * dy);
-
-            if (dist < nmsThreshold * std::max(det.w, det.h)) {
+            if (calcIoU(det, detections[j]) > nmsThreshold) {
                 suppressed[j] = true;
             }
         }
