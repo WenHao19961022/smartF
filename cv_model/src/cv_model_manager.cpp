@@ -272,6 +272,9 @@ void CvModelManager::StaticRecognitionInternal() {
                     bool matched = false;
                     for (size_t j = 0; j < fruitCandidates.size(); ++j) {
                         auto& cand = fruitCandidates[j];
+                        if (j >= used.size()) {
+                            used.resize(fruitCandidates.size(), false);
+                        }
                         if (cand.type != det.fruitType || cand.freshness != det.freshness || used[j]) {
                             continue;
                         }
@@ -466,6 +469,9 @@ void CvModelManager::DynamicEstablishBaseline() {
         for (const auto& fruit : frameDetections) {
             bool matched = false;
             for (size_t j = 0; j < candidates.size(); ++j) {
+                if (j >= candidateUsed.size()) {
+                    candidateUsed.resize(candidates.size(), false);
+                }
                 if (candidateUsed[j]) continue;
                 if (candidates[j].type != fruit.fruitType) continue;
 
@@ -487,6 +493,7 @@ void CvModelManager::DynamicEstablishBaseline() {
                 candidates.push_back({fruit.fruitType,
                                       static_cast<float>(fruit.locationX),
                                       static_cast<float>(fruit.locationY), 1});
+                candidateUsed.push_back(true);
             }
         }
     }

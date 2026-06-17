@@ -1,7 +1,88 @@
 #include "../include/inventory_manager.h"
 #include "../include/core_log.h"
 #include <cmath>
+#include <limits>
 #include <numeric>
+
+namespace {
+
+void ApplyStaticPropertiesToCategory(
+    FruitType type,
+    const StaticRecognitionResult& statRes,
+    CategoryStock& category)
+{
+    if (category.fruits.empty()) {
+        return;
+    }
+
+    std::vector<uint8_t> detectionIndices;
+    for (uint8_t i = 0; i < statRes.fruitCount; ++i) {
+        if (statRes.fruits[i].fruitType == type) {
+            detectionIndices.push_back(i);
+        }
+    }
+    if (detectionIndices.empty()) {
+        return;
+    }
+
+    std::vector<bool> detectionUsed(detectionIndices.size(), false);
+    std::vector<bool> fruitUpdated(category.fruits.size(), false);
+
+    auto applyDetection = [&](size_t fruitIndex, size_t detectionSlot) {
+        const auto& det = statRes.fruits[detectionIndices[detectionSlot]];
+        category.fruits[fruitIndex].freshness = static_cast<uint8_t>(det.freshness);
+        category.fruits[fruitIndex].locationX = det.locationX;
+        category.fruits[fruitIndex].locationY = det.locationY;
+        detectionUsed[detectionSlot] = true;
+        fruitUpdated[fruitIndex] = true;
+    };
+
+    // Existing items are matched by nearest known coordinate, so multiple apples
+    // keep their own freshness/position instead of being paired by vector order.
+    for (size_t fruitIndex = 0; fruitIndex < category.fruits.size(); ++fruitIndex) {
+        const auto& fruit = category.fruits[fruitIndex];
+        bool hasKnownLocation = fruit.locationX != 0 || fruit.locationY != 0;
+        if (!hasKnownLocation) {
+            continue;
+        }
+
+        float bestDist = std::numeric_limits<float>::max();
+        int bestSlot = -1;
+        for (size_t slot = 0; slot < detectionIndices.size(); ++slot) {
+            if (detectionUsed[slot]) {
+                continue;
+            }
+            const auto& det = statRes.fruits[detectionIndices[slot]];
+            float dx = static_cast<float>(fruit.locationX) - det.locationX;
+            float dy = static_cast<float>(fruit.locationY) - det.locationY;
+            float dist = dx * dx + dy * dy;
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestSlot = static_cast<int>(slot);
+            }
+        }
+
+        if (bestSlot >= 0) {
+            applyDetection(fruitIndex, static_cast<size_t>(bestSlot));
+        }
+    }
+
+    // New items have no stable coordinate yet; assign remaining detections in
+    // detection order so every visible fruit still receives a freshness value.
+    for (size_t fruitIndex = 0; fruitIndex < category.fruits.size(); ++fruitIndex) {
+        if (fruitUpdated[fruitIndex]) {
+            continue;
+        }
+        for (size_t slot = 0; slot < detectionIndices.size(); ++slot) {
+            if (!detectionUsed[slot]) {
+                applyDetection(fruitIndex, slot);
+                break;
+            }
+        }
+    }
+}
+
+}
 
 void InventoryManager::Reconcile(
     const std::map<FruitType, int32_t>& draftWeightDelta, 
@@ -139,8 +220,12 @@ void InventoryManager::Reconcile(
         // 绝对服从静态数量变动进行 FIFO 出入库 (对应场景C)
         if (delta > 0) {
             for (int i = 0; i < delta; ++i) {
-                TrackedFruit f; f.id = GetNextId(); f.type = type; f.putInTimestamp = batchTs;
-                f.uid = std::to_string((int)type) + "_" + std::to_string(batchTs);
+                TrackedFruit f{};
+                f.id = GetNextId();
+                f.type = type;
+                f.putInTimestamp = batchTs;
+                f.freshness = static_cast<uint8_t>(FreshnessLevel::Fresh);
+                f.uid = std::to_string((int)type) + "_" + std::to_string(batchTs) + "_" + std::to_string(f.id);
                 category.fruits.push_back(f);
             }
         } else if (delta < 0) {
@@ -170,15 +255,7 @@ void InventoryManager::Reconcile(
             category.totalWeight = minWeight;
         }
 
-        int fruitIdx = 0;
-        for (uint8_t i = 0; i < statRes.fruitCount; ++i) {
-            if (statRes.fruits[i].fruitType == type && static_cast<size_t>(fruitIdx) < currentCount) {
-                category.fruits[fruitIdx].freshness = static_cast<uint8_t>(statRes.fruits[i].freshness);
-                category.fruits[fruitIdx].locationX = statRes.fruits[i].locationX;
-                category.fruits[fruitIdx].locationY = statRes.fruits[i].locationY;
-                fruitIdx++;
-            }
-        }
+        ApplyStaticPropertiesToCategory(type, statRes, category);
         ++it;
     }
 
@@ -217,16 +294,7 @@ void InventoryManager::UpdateStaticProperties(const StaticRecognitionResult& sta
     
     // 遍历现有账本，仅将最新的新鲜度和坐标覆盖上去
     for (auto& [type, category] : mStock) {
-        int fruitIdx = 0;
-        for (uint8_t i = 0; i < statRes.fruitCount; ++i) {
-            // 类型匹配且不超出当前记录数量时覆写
-            if (statRes.fruits[i].fruitType == type && static_cast<size_t>(fruitIdx) < category.fruits.size()) {
-                category.fruits[fruitIdx].freshness = static_cast<uint8_t>(statRes.fruits[i].freshness);
-                category.fruits[fruitIdx].locationX = statRes.fruits[i].locationX;
-                category.fruits[fruitIdx].locationY = statRes.fruits[i].locationY;
-                fruitIdx++;
-            }
-        }
+        ApplyStaticPropertiesToCategory(type, statRes, category);
     }
     LOG_OK("定时刷新完毕");
 }

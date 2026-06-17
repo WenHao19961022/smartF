@@ -4,8 +4,8 @@
 #include <cstdint>
 
 // ==================== 常量 ====================
-const uint8_t kMaxStaticFruitCount = 10;
-const uint8_t kMaxDynamicEventCount = 20;  // 单次开门最大变化事件数
+const uint8_t kMaxStaticFruitCount = 32;
+const uint8_t kMaxDynamicEventCount = 64;  // 单次开门最大变化事件数
 
 // ==================== 枚举 ====================
 enum class FruitType : uint8_t {
