@@ -30,6 +30,15 @@ struct YoloDetection {
     std::vector<float> classScores;
 };
 
+struct ResolvedDetection {
+    FruitType fruitType;
+    FreshnessLevel freshness;
+    bool orangeReclass;
+    float orangeScore;
+    float rottenOrangeScore;
+    float orangeRatio;
+};
+
 struct BagCandidate {
     cv::Rect rect;
     float score;
@@ -47,7 +56,7 @@ static cv::Rect DetectionRect(const YoloDetection& det, const cv::Size& bounds) 
     return cv::Rect(x1, y1, x2 - x1, y2 - y1);
 }
 
-static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetection& det) {
+static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetection& det, FruitType fruitType) {
     if (modelFrame.empty()) {
         return 0.0f;
     }
@@ -63,6 +72,10 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
 
     int darkV = ConfigManager::GetInstance().GetInt("cv.rotten_dark_v_threshold", 80);
     int darkS = ConfigManager::GetInstance().GetInt("cv.rotten_dark_s_threshold", 30);
+    if (fruitType == FruitType::Orange) {
+        darkV = ConfigManager::GetInstance().GetInt("cv.rotten_dark_v_threshold_orange", darkV);
+        darkS = ConfigManager::GetInstance().GetInt("cv.rotten_dark_s_threshold_orange", darkS);
+    }
 
     cv::Mat darkMask;
     cv::inRange(hsv, cv::Scalar(0, darkS, 0), cv::Scalar(180, 255, darkV), darkMask);
@@ -84,6 +97,41 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
 
     int darkPixels = cv::countNonZero(darkMask);
     return static_cast<float>(darkPixels) / static_cast<float>(fruitPixels);
+}
+
+static float EstimateOrangePeelRatio(const cv::Mat& modelFrame, const YoloDetection& det) {
+    if (modelFrame.empty()) {
+        return 0.0f;
+    }
+
+    cv::Rect roi = DetectionRect(det, modelFrame.size());
+    if (roi.width < 12 || roi.height < 12) {
+        return 0.0f;
+    }
+
+    cv::Mat crop = modelFrame(roi);
+    cv::Mat hsv;
+    cv::cvtColor(crop, hsv, cv::COLOR_BGR2HSV);
+
+    cv::Mat orangeMask;
+    cv::inRange(hsv, cv::Scalar(5, 60, 50), cv::Scalar(35, 255, 255), orangeMask);
+
+    cv::Mat fruitMask;
+    cv::inRange(hsv, cv::Scalar(0, 35, 40), cv::Scalar(180, 255, 255), fruitMask);
+
+    cv::Mat darkMask;
+    cv::inRange(hsv, cv::Scalar(0, 30, 0), cv::Scalar(180, 255, 80), darkMask);
+    cv::bitwise_or(fruitMask, darkMask, fruitMask);
+
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+    cv::morphologyEx(orangeMask, orangeMask, cv::MORPH_OPEN, kernel);
+    cv::morphologyEx(fruitMask, fruitMask, cv::MORPH_CLOSE, kernel);
+
+    int fruitPixels = cv::countNonZero(fruitMask);
+    if (fruitPixels <= 0) {
+        return 0.0f;
+    }
+    return static_cast<float>(cv::countNonZero(orangeMask)) / static_cast<float>(fruitPixels);
 }
 
 static float RectIoU(const cv::Rect& a, const cv::Rect& b) {
@@ -152,17 +200,397 @@ static bool OverlapsKnownFruit(const cv::Rect& candidate, const std::vector<cv::
         return true;
     }
 
+    int combinedFruitOverlap = 0;
     for (const auto& fruitRect : fruitRects) {
         int interArea = (candidate & fruitRect).area();
         if (interArea <= 0) {
             continue;
         }
+        combinedFruitOverlap += interArea;
+        int fruitArea = fruitRect.area();
+        if (fruitArea <= 0) {
+            continue;
+        }
         float candidateOverlap = static_cast<float>(interArea) / static_cast<float>(candidateArea);
-        if (RectIoU(candidate, fruitRect) > 0.25f || candidateOverlap > 0.55f) {
+        bool similarSizeToFruit = candidateArea <= static_cast<int>(fruitArea * 1.25f);
+        if (candidateOverlap > 0.55f || (similarSizeToFruit && RectIoU(candidate, fruitRect) > 0.25f)) {
             return true;
         }
     }
+
+    float maxCombinedOverlap = ConfigManager::GetInstance().GetFloat("cv.bag_fruit_overlap_max", 0.35f);
+    float combinedOverlapRatio = static_cast<float>(std::min(combinedFruitOverlap, candidateArea))
+        / static_cast<float>(candidateArea);
+    if (combinedOverlapRatio > maxCombinedOverlap) {
+        return true;
+    }
+
     return false;
+}
+
+static cv::Rect ClampRect(const cv::Rect& rect, const cv::Size& bounds) {
+    int x1 = std::max(0, rect.x);
+    int y1 = std::max(0, rect.y);
+    int x2 = std::min(bounds.width, rect.x + rect.width);
+    int y2 = std::min(bounds.height, rect.y + rect.height);
+    if (x2 <= x1 || y2 <= y1) {
+        return cv::Rect();
+    }
+    return cv::Rect(x1, y1, x2 - x1, y2 - y1);
+}
+
+static cv::Rect ExpandRect(const cv::Rect& rect, int margin, const cv::Size& bounds) {
+    return ClampRect(cv::Rect(rect.x - margin, rect.y - margin,
+                              rect.width + margin * 2, rect.height + margin * 2), bounds);
+}
+
+static bool TouchesImageBorder(const cv::Rect& rect, const cv::Size& bounds, float marginRatio) {
+    int borderMarginX = static_cast<int>(bounds.width * marginRatio);
+    int borderMarginY = static_cast<int>(bounds.height * marginRatio);
+    return rect.x <= borderMarginX
+        || rect.y <= borderMarginY
+        || rect.x + rect.width >= bounds.width - borderMarginX
+        || rect.y + rect.height >= bounds.height - borderMarginY;
+}
+
+static float WarmFruitCoverage(const cv::Mat& hsv, const cv::Rect& rect) {
+    if (hsv.empty() || rect.area() <= 0) {
+        return 0.0f;
+    }
+
+    cv::Mat hsvRoi = hsv(rect);
+    cv::Mat warmMask;
+    cv::Mat redMask;
+    cv::inRange(hsvRoi, cv::Scalar(0, 50, 50), cv::Scalar(45, 255, 255), warmMask);
+    cv::inRange(hsvRoi, cv::Scalar(160, 50, 50), cv::Scalar(180, 255, 255), redMask);
+    cv::bitwise_or(warmMask, redMask, warmMask);
+    return static_cast<float>(cv::countNonZero(warmMask)) / static_cast<float>(rect.area());
+}
+
+static bool RejectWarmFruitAsWhiteBag(const cv::Rect& rect, const cv::Mat& hsv, float whiteCoverage) {
+    float maxWarmCoverage = ConfigManager::GetInstance().GetFloat("cv.bag_white_warm_fruit_ratio_max", 0.45f);
+    float warmCoverage = WarmFruitCoverage(hsv, rect);
+    return warmCoverage > maxWarmCoverage && warmCoverage > whiteCoverage * 1.2f;
+}
+
+static cv::Mat GetBagBackgroundFrame() {
+    static std::string loadedPath;
+    static bool loadAttempted = false;
+    static cv::Mat backgroundFrame;
+
+    std::string path = ConfigManager::GetInstance().GetString("cv.bag_background_path", "");
+    if (path.empty()) {
+        return cv::Mat();
+    }
+
+    if (!loadAttempted || path != loadedPath) {
+        loadedPath = path;
+        loadAttempted = true;
+        backgroundFrame.release();
+
+        cv::Mat loaded = cv::imread(path);
+        if (!loaded.empty()) {
+            cv::resize(loaded, backgroundFrame, cv::Size(640, 640));
+            LOG_PRINT("[CvModel]", "Loaded bag background: " << path);
+        } else {
+            LOG_PRINT("[CvModel]", "Bag background not available: " << path);
+        }
+    }
+
+    return backgroundFrame;
+}
+
+static bool AcceptWhiteBagRect(
+    const cv::Rect& rawRect,
+    const cv::Mat& whiteMask,
+    const cv::Mat& whiteSupportMask,
+    const cv::Mat& edges,
+    const cv::Mat& gray,
+    const cv::Mat& hsv,
+    float minAreaRatio,
+    float maxAreaRatio,
+    float& score)
+{
+    cv::Rect rect = ClampRect(rawRect, whiteMask.size());
+    if (rect.width < 30 || rect.height < 30) {
+        return false;
+    }
+
+    double frameArea = static_cast<double>(whiteMask.rows * whiteMask.cols);
+    double rectArea = static_cast<double>(rect.area());
+    double areaRatio = rectArea / frameArea;
+    if (areaRatio < minAreaRatio || areaRatio > maxAreaRatio) {
+        return false;
+    }
+
+    double aspect = static_cast<double>(rect.width) / static_cast<double>(rect.height);
+    if (aspect < 0.25 || aspect > 4.0) {
+        return false;
+    }
+
+    float whiteCoverageMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_coverage_min", 0.18f);
+    float edgeRatioMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_edge_ratio_min", 0.015f);
+    float innerEdgeRatioMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_inner_edge_ratio_min", 0.004f);
+    float stddevMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_stddev_min", 8.0f);
+    float borderContrastMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_border_contrast_min", 6.0f);
+    float glareRatioMax = ConfigManager::GetInstance().GetFloat("cv.bag_white_glare_ratio_max", 0.55f);
+    float ignoreTopRatio = ConfigManager::GetInstance().GetFloat("cv.bag_ignore_top_ratio", 0.08f);
+    float borderMarginRatio = ConfigManager::GetInstance().GetFloat("cv.bag_white_border_margin_ratio", 0.03f);
+
+    if (ConfigManager::GetInstance().GetBool("cv.bag_white_reject_border_touch", true)
+        && TouchesImageBorder(rect, whiteMask.size(), borderMarginRatio)) {
+        return false;
+    }
+
+    cv::Mat whiteRoi = whiteMask(rect);
+    float whiteCoverage = static_cast<float>(cv::countNonZero(whiteRoi)) / static_cast<float>(rect.area());
+    if (whiteCoverage < whiteCoverageMin) {
+        return false;
+    }
+    if (RejectWarmFruitAsWhiteBag(rect, hsv, whiteCoverage)) {
+        return false;
+    }
+
+    cv::Mat edgeSupportRoi;
+    cv::bitwise_and(edges(rect), whiteSupportMask(rect), edgeSupportRoi);
+    float edgeRatio = static_cast<float>(cv::countNonZero(edgeSupportRoi)) / static_cast<float>(rect.area());
+    if (edgeRatio < edgeRatioMin) {
+        return false;
+    }
+
+    cv::Rect innerRect = ClampRect(cv::Rect(rect.x + 8, rect.y + 8, rect.width - 16, rect.height - 16), whiteMask.size());
+    float innerEdgeRatio = 0.0f;
+    if (innerRect.area() > 0) {
+        cv::Mat innerEdges;
+        cv::bitwise_and(edges(innerRect), whiteSupportMask(innerRect), innerEdges);
+        innerEdgeRatio = static_cast<float>(cv::countNonZero(innerEdges)) / static_cast<float>(innerRect.area());
+    }
+
+    cv::Scalar meanGray;
+    cv::Scalar stdGray;
+    cv::meanStdDev(gray(rect), meanGray, stdGray, whiteRoi);
+    float grayStddev = static_cast<float>(stdGray[0]);
+
+    cv::Rect outerRect = ExpandRect(rect, 14, whiteMask.size());
+    float borderContrast = 0.0f;
+    if (outerRect.area() > rect.area()) {
+        cv::Mat ringMask(outerRect.size(), CV_8UC1, cv::Scalar(255));
+        cv::Rect innerInOuter(rect.x - outerRect.x, rect.y - outerRect.y, rect.width, rect.height);
+        cv::rectangle(ringMask, innerInOuter, cv::Scalar(0), cv::FILLED);
+        cv::Scalar outerMean = cv::mean(gray(outerRect), ringMask);
+        borderContrast = std::abs(static_cast<float>(meanGray[0] - outerMean[0]));
+    }
+
+    cv::Mat hsvRoi = hsv(rect);
+    cv::Mat sChannel;
+    cv::Mat vChannel;
+    cv::extractChannel(hsvRoi, sChannel, 1);
+    cv::extractChannel(hsvRoi, vChannel, 2);
+    cv::Mat glareMask;
+    cv::inRange(vChannel, cv::Scalar(245), cv::Scalar(255), glareMask);
+    cv::Mat lowSaturationMask;
+    cv::inRange(sChannel, cv::Scalar(0), cv::Scalar(35), lowSaturationMask);
+    cv::bitwise_and(glareMask, lowSaturationMask, glareMask);
+    float glareRatio = static_cast<float>(cv::countNonZero(glareMask)) / static_cast<float>(rect.area());
+
+    bool topLightingArea = rect.y < static_cast<int>(whiteMask.rows * ignoreTopRatio);
+    bool hasInternalTexture = innerEdgeRatio >= innerEdgeRatioMin || grayStddev >= stddevMin;
+    bool hasObjectBoundary = borderContrast >= borderContrastMin || edgeRatio >= edgeRatioMin * 1.6f;
+
+    if (topLightingArea && !hasInternalTexture) {
+        return false;
+    }
+    if (glareRatio > glareRatioMax && innerEdgeRatio < innerEdgeRatioMin && grayStddev < stddevMin * 1.5f) {
+        return false;
+    }
+    if (!hasInternalTexture && !hasObjectBoundary) {
+        return false;
+    }
+
+    score = edgeRatio + innerEdgeRatio * 1.5f + grayStddev * 0.002f
+        + borderContrast * 0.001f + whiteCoverage * 0.05f;
+    return true;
+}
+
+static void AddForegroundBagCandidates(
+    const cv::Mat& modelFrame,
+    const cv::Mat& redMask,
+    const cv::Mat& whiteMask,
+    const cv::Mat& edges,
+    const cv::Mat& hsv,
+    const std::vector<cv::Rect>& fruitRects,
+    std::vector<BagCandidate>& candidates)
+{
+    cv::Mat backgroundFrame = GetBagBackgroundFrame();
+    if (backgroundFrame.empty()) {
+        return;
+    }
+
+    cv::Mat diff;
+    cv::absdiff(modelFrame, backgroundFrame, diff);
+    cv::Mat grayDiff;
+    cv::cvtColor(diff, grayDiff, cv::COLOR_BGR2GRAY);
+
+    int diffThreshold = ConfigManager::GetInstance().GetInt("cv.bag_bg_diff_threshold", 40);
+    float minAreaRatio = ConfigManager::GetInstance().GetFloat("cv.bag_bg_min_area_ratio", 0.01f);
+    float maxAreaRatio = ConfigManager::GetInstance().GetFloat("cv.bag_bg_max_area_ratio", 0.45f);
+    float borderMarginRatio = ConfigManager::GetInstance().GetFloat("cv.bag_bg_border_margin_ratio", 0.03f);
+    float minWhiteCoverage = ConfigManager::GetInstance().GetFloat("cv.bag_bg_white_coverage_min", 0.15f);
+    float minRedCoverage = ConfigManager::GetInstance().GetFloat("cv.bag_bg_red_coverage_min", 0.04f);
+    float minEdgeRatio = ConfigManager::GetInstance().GetFloat("cv.bag_bg_edge_ratio_min", 0.012f);
+    int closeKernelSize = ConfigManager::GetInstance().GetInt("cv.bag_bg_close_kernel", 5);
+    closeKernelSize = std::max(3, closeKernelSize | 1);
+
+    cv::Mat fgMask;
+    cv::threshold(grayDiff, fgMask, diffThreshold, 255, cv::THRESH_BINARY);
+    cv::morphologyEx(fgMask, fgMask, cv::MORPH_OPEN,
+                     cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+    cv::morphologyEx(fgMask, fgMask, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_RECT, cv::Size(closeKernelSize, closeKernelSize)));
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(fgMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    double frameArea = static_cast<double>(fgMask.rows * fgMask.cols);
+
+    for (const auto& contour : contours) {
+        double contourArea = cv::contourArea(contour);
+        double areaRatio = contourArea / frameArea;
+        if (areaRatio < minAreaRatio || areaRatio > maxAreaRatio) {
+            continue;
+        }
+
+        cv::Rect rect = cv::boundingRect(contour);
+        if (rect.width < 30 || rect.height < 30) {
+            continue;
+        }
+
+        double aspect = static_cast<double>(rect.width) / static_cast<double>(rect.height);
+        if (aspect < 0.25 || aspect > 4.0) {
+            continue;
+        }
+        if (TouchesImageBorder(rect, fgMask.size(), borderMarginRatio)) {
+            continue;
+        }
+        if (OverlapsKnownFruit(rect, fruitRects)) {
+            continue;
+        }
+
+        float rectArea = static_cast<float>(rect.area());
+        float whiteCoverage = static_cast<float>(cv::countNonZero(whiteMask(rect))) / rectArea;
+        float redCoverage = static_cast<float>(cv::countNonZero(redMask(rect))) / rectArea;
+        float edgeRatio = static_cast<float>(cv::countNonZero(edges(rect))) / rectArea;
+        if (whiteCoverage < minWhiteCoverage && redCoverage < minRedCoverage && edgeRatio < minEdgeRatio) {
+            continue;
+        }
+
+        bool isWhiteCandidate = redCoverage <= whiteCoverage;
+        if (isWhiteCandidate && RejectWarmFruitAsWhiteBag(rect, hsv, whiteCoverage)) {
+            continue;
+        }
+        const char* color = isWhiteCandidate ? "white" : "red";
+        float score = static_cast<float>(areaRatio) + whiteCoverage * 0.2f + redCoverage * 0.4f + edgeRatio;
+        AddBagCandidate(candidates, {rect, score, color});
+    }
+}
+
+static std::vector<FruitInfo> DetectOrangesOpenCV(
+    const cv::Mat& frame,
+    std::vector<cv::Rect>& fruitRects)
+{
+    std::vector<FruitInfo> results;
+    if (frame.empty() || !ConfigManager::GetInstance().GetBool("cv.orange_opencv_detect_enable", true)) {
+        return results;
+    }
+
+    cv::Mat modelFrame;
+    cv::resize(frame, modelFrame, cv::Size(640, 640));
+
+    cv::Mat hsv;
+    cv::cvtColor(modelFrame, hsv, cv::COLOR_BGR2HSV);
+
+    cv::Mat orangeMask;
+    cv::inRange(hsv, cv::Scalar(5, 60, 50), cv::Scalar(35, 255, 255), orangeMask);
+    cv::morphologyEx(orangeMask, orangeMask, cv::MORPH_OPEN,
+                     cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+    cv::morphologyEx(orangeMask, orangeMask, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(9, 9)));
+
+    float minAreaRatio = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_min_area_ratio", 0.008f);
+    float maxAreaRatio = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_max_area_ratio", 0.18f);
+    float minCoverage = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_min_coverage", 0.55f);
+    float minCircularity = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_min_circularity", 0.35f);
+    float minAspect = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_min_aspect", 0.55f);
+    float maxAspect = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_max_aspect", 1.35f);
+    int minFruitBoxSide = ConfigManager::GetInstance().GetInt("cv.min_fruit_box_side", 36);
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(orangeMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    double frameArea = static_cast<double>(orangeMask.rows * orangeMask.cols);
+
+    for (const auto& contour : contours) {
+        double area = cv::contourArea(contour);
+        double areaRatio = area / frameArea;
+        if (areaRatio < minAreaRatio || areaRatio > maxAreaRatio) {
+            continue;
+        }
+
+        cv::Rect rect = cv::boundingRect(contour);
+        if (rect.width < minFruitBoxSide || rect.height < minFruitBoxSide) {
+            continue;
+        }
+
+        double aspect = static_cast<double>(rect.width) / static_cast<double>(rect.height);
+        if (aspect < minAspect || aspect > maxAspect) {
+            continue;
+        }
+
+        double perimeter = cv::arcLength(contour, true);
+        double circularity = perimeter > 0.0
+            ? 4.0 * 3.14159265358979323846 * area / (perimeter * perimeter)
+            : 0.0;
+        if (circularity < minCircularity) {
+            continue;
+        }
+
+        if (OverlapsKnownFruit(rect, fruitRects)) {
+            continue;
+        }
+
+        float orangeCoverage = static_cast<float>(cv::countNonZero(orangeMask(rect)))
+            / static_cast<float>(rect.area());
+        if (orangeCoverage < minCoverage) {
+            continue;
+        }
+
+        YoloDetection pseudoDet{};
+        pseudoDet.cx = rect.x + rect.width * 0.5f;
+        pseudoDet.cy = rect.y + rect.height * 0.5f;
+        pseudoDet.w = static_cast<float>(rect.width);
+        pseudoDet.h = static_cast<float>(rect.height);
+        pseudoDet.confidence = std::min(0.99f, std::max(0.25f, orangeCoverage * static_cast<float>(circularity)));
+        pseudoDet.classId = 2;
+
+        float darkRatio = EstimateDarkSpotRatio(modelFrame, pseudoDet, FruitType::Orange);
+        float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.07f);
+
+        FruitInfo info;
+        info.fruitType = FruitType::Orange;
+        info.locationX = ToLocationByte(pseudoDet.cx);
+        info.locationY = ToLocationByte(pseudoDet.cy);
+        info.freshness = darkRatio >= rottenThreshold ? FreshnessLevel::Rotten : FreshnessLevel::Fresh;
+
+        results.push_back(info);
+        fruitRects.push_back(rect);
+        LOG_PRINT("[CvModel]", "  OrangeFallback score=" << pseudoDet.confidence
+                  << " coverage=" << orangeCoverage
+                  << " circularity=" << circularity
+                  << " darkRatio=" << darkRatio
+                  << " freshness=" << (int)info.freshness
+                  << " rect=(" << rect.x << "," << rect.y << ","
+                  << rect.width << "," << rect.height << ")");
+    }
+
+    return results;
 }
 
 static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
@@ -199,10 +627,15 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(redMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     float redMinArea = ConfigManager::GetInstance().GetFloat("cv.bag_red_min_area_ratio", 0.01f);
+    float redBorderMargin = ConfigManager::GetInstance().GetFloat("cv.bag_red_border_margin_ratio", 0.03f);
     for (const auto& contour : contours) {
         cv::Rect rect;
         float fillRatio = 0.0f;
         if (AcceptBagContour(contour, redMask, redMinArea, maxAreaRatio, rect, fillRatio)) {
+            if (ConfigManager::GetInstance().GetBool("cv.bag_red_reject_border_touch", true)
+                && TouchesImageBorder(rect, redMask.size(), redBorderMargin)) {
+                continue;
+            }
             if (OverlapsKnownFruit(rect, fruitRects)) {
                 continue;
             }
@@ -210,10 +643,9 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
         }
     }
 
-    int whiteSMax = ConfigManager::GetInstance().GetInt("cv.bag_white_s_max", 55);
-    int whiteVMin = ConfigManager::GetInstance().GetInt("cv.bag_white_v_min", 135);
+    int whiteSMax = ConfigManager::GetInstance().GetInt("cv.bag_white_s_max", 90);
+    int whiteVMin = ConfigManager::GetInstance().GetInt("cv.bag_white_v_min", 105);
     float whiteMinArea = ConfigManager::GetInstance().GetFloat("cv.bag_white_min_area_ratio", 0.02f);
-    float whiteEdgeRatioMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_edge_ratio_min", 0.015f);
 
     cv::Mat whiteMask;
     cv::inRange(hsv, cv::Scalar(0, 0, whiteVMin), cv::Scalar(180, whiteSMax, 255), whiteMask);
@@ -227,6 +659,11 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
     cv::cvtColor(modelFrame, gray, cv::COLOR_BGR2GRAY);
     cv::Canny(gray, edges, 60, 140);
 
+    cv::Mat whiteSupportMask;
+    cv::dilate(whiteMask, whiteSupportMask, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7)));
+
+    AddForegroundBagCandidates(modelFrame, redMask, whiteMask, edges, hsv, fruitRects, candidates);
+
     contours.clear();
     cv::findContours(whiteMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     for (const auto& contour : contours) {
@@ -238,22 +675,33 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
         if (OverlapsKnownFruit(rect, fruitRects)) {
             continue;
         }
-
-        cv::Mat contourMask = cv::Mat::zeros(whiteMask.size(), CV_8UC1);
-        std::vector<std::vector<cv::Point>> oneContour{contour};
-        cv::drawContours(contourMask, oneContour, 0, cv::Scalar(255), cv::FILLED);
-
-        cv::Mat contourEdges;
-        cv::bitwise_and(edges, contourMask, contourEdges);
-        int areaPixels = cv::countNonZero(contourMask);
-        float edgeRatio = areaPixels > 0
-            ? static_cast<float>(cv::countNonZero(contourEdges)) / static_cast<float>(areaPixels)
-            : 0.0f;
-        if (edgeRatio < whiteEdgeRatioMin) {
+        float score = 0.0f;
+        if (!AcceptWhiteBagRect(rect, whiteMask, whiteSupportMask, edges, gray, hsv,
+                                whiteMinArea, maxAreaRatio, score)) {
             continue;
         }
+        AddBagCandidate(candidates, {rect, score + fillRatio * 0.05f, "white"});
+    }
 
-        AddBagCandidate(candidates, {rect, edgeRatio + fillRatio * 0.1f, "white"});
+    cv::Mat whiteEdges;
+    cv::bitwise_and(edges, whiteSupportMask, whiteEdges);
+    cv::dilate(whiteEdges, whiteEdges, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+    cv::morphologyEx(whiteEdges, whiteEdges, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_RECT, cv::Size(11, 11)));
+
+    contours.clear();
+    cv::findContours(whiteEdges, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    for (const auto& contour : contours) {
+        cv::Rect rect = cv::boundingRect(contour);
+        if (OverlapsKnownFruit(rect, fruitRects)) {
+            continue;
+        }
+        float score = 0.0f;
+        if (!AcceptWhiteBagRect(rect, whiteMask, whiteSupportMask, edges, gray, hsv,
+                                whiteMinArea, maxAreaRatio, score)) {
+            continue;
+        }
+        AddBagCandidate(candidates, {rect, score, "white"});
     }
 
     for (const auto& candidate : candidates) {
@@ -364,13 +812,19 @@ static std::vector<FruitInfo> PostProcessYOLO(
     const cv::Mat& frame,
     const std::vector<float>& output,
     const std::vector<int>& outputDims,
-    float confThreshold = 0.5f,
-    float nmsThreshold = 0.4f)
+    float confThreshold = -1.0f,
+    float nmsThreshold = -1.0f)
 {
     std::vector<FruitInfo> results;
 
     if (output.empty() || outputDims.size() < 3) {
         return results;
+    }
+    if (confThreshold < 0.0f) {
+        confThreshold = ConfigManager::GetInstance().GetFloat("cv.conf_threshold", 0.25f);
+    }
+    if (nmsThreshold < 0.0f) {
+        nmsThreshold = ConfigManager::GetInstance().GetFloat("cv.nms_threshold", 0.4f);
     }
 
     const int dim1 = outputDims[1];
@@ -397,6 +851,40 @@ static std::vector<FruitInfo> PostProcessYOLO(
     };
 
     std::vector<YoloDetection> detections;
+    cv::Mat modelFrame;
+    if (!frame.empty()) {
+        cv::resize(frame, modelFrame, cv::Size(640, 640));
+    }
+
+    auto resolveDetection = [&](const YoloDetection& det) -> ResolvedDetection {
+        ResolvedDetection resolved{};
+        resolved.fruitType = classMappings[det.classId].fruitType;
+        resolved.freshness = classMappings[det.classId].freshness;
+        resolved.orangeReclass = false;
+        resolved.orangeScore = det.classScores.size() > 2 ? det.classScores[2] : 0.0f;
+        resolved.rottenOrangeScore = det.classScores.size() > 5 ? det.classScores[5] : 0.0f;
+        resolved.orangeRatio = 0.0f;
+
+        if (resolved.fruitType == FruitType::Apple
+            && ConfigManager::GetInstance().GetBool("cv.orange_color_reclass_enable", true)) {
+            resolved.orangeRatio = EstimateOrangePeelRatio(modelFrame, det);
+            float orangeScoreMin = ConfigManager::GetInstance().GetFloat("cv.orange_reclass_score_min", 0.03f);
+            float orangeRatioMin = ConfigManager::GetInstance().GetFloat("cv.orange_reclass_ratio_min", 0.45f);
+            float orangeStrongRatioMin = ConfigManager::GetInstance().GetFloat("cv.orange_reclass_strong_ratio_min", 0.80f);
+            bool scoreBackedOrange = std::max(resolved.orangeScore, resolved.rottenOrangeScore) >= orangeScoreMin
+                && resolved.orangeRatio >= orangeRatioMin;
+            bool strongColorOrange = resolved.orangeRatio >= orangeStrongRatioMin;
+            if (scoreBackedOrange || strongColorOrange) {
+                resolved.fruitType = FruitType::Orange;
+                resolved.freshness = resolved.rottenOrangeScore > resolved.orangeScore
+                    ? FreshnessLevel::Rotten
+                    : FreshnessLevel::Fresh;
+                resolved.orangeReclass = true;
+            }
+        }
+
+        return resolved;
+    };
 
     auto readOutput = [&](int proposal, int channel) -> float {
         if (channelsFirst) {
@@ -447,7 +935,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
             }
         }
 
-        if (maxConf > confThreshold) {
+        if (maxConf >= confThreshold) {
             detections.push_back({cx, cy, bw, bh, maxConf, maxClassId, classScores});
         }
     }
@@ -474,21 +962,43 @@ static std::vector<FruitInfo> PostProcessYOLO(
         std::string label_name = (det.classId < static_cast<int>(classMappings.size())) ? classMappings[det.classId].label : "Unknown";
         float freshAppleScore = det.classScores.size() > 0 ? det.classScores[0] : 0.0f;
         float rottenAppleScore = det.classScores.size() > 3 ? det.classScores[3] : 0.0f;
+        float freshOrangeScore = det.classScores.size() > 2 ? det.classScores[2] : 0.0f;
+        float rottenOrangeScore = det.classScores.size() > 5 ? det.classScores[5] : 0.0f;
         std::cout << "[" << det.classId << "] " << label_name
                   << " conf=" << det.confidence
                   << " apple_scores(fresh=" << freshAppleScore
                   << ", rotten=" << rottenAppleScore << ")"
+                  << " orange_scores(fresh=" << freshOrangeScore
+                  << ", rotten=" << rottenOrangeScore << ")"
                   << std::endl;
 
         if (det.classId < 0 || det.classId >= static_cast<int>(classMappings.size())) {
             continue;
         }
 
+        ResolvedDetection resolved = resolveDetection(det);
         FruitInfo info;
-        info.fruitType = classMappings[det.classId].fruitType;
+        info.fruitType = resolved.fruitType;
         info.locationX = ToLocationByte(det.cx);
         info.locationY = ToLocationByte(det.cy);
-        info.freshness = classMappings[det.classId].freshness;
+        info.freshness = resolved.freshness;
+        if (resolved.orangeReclass) {
+            LOG_PRINT("[CvModel]", "  Reclass apple->orange"
+                      << " orangeScore=" << resolved.orangeScore
+                      << " rottenOrangeScore=" << resolved.rottenOrangeScore
+                      << " orangeRatio=" << resolved.orangeRatio);
+        }
+        if (info.fruitType != FruitType::PlasticBag) {
+            float minFruitAreaRatio = ConfigManager::GetInstance().GetFloat("cv.min_fruit_box_area_ratio", 0.003f);
+            int minFruitBoxSide = ConfigManager::GetInstance().GetInt("cv.min_fruit_box_side", 36);
+            float boxAreaRatio = (det.w * det.h) / (640.0f * 640.0f);
+            if (boxAreaRatio < minFruitAreaRatio || det.w < minFruitBoxSide || det.h < minFruitBoxSide) {
+                LOG_PRINT("[CvModel]", "  Skip tiny fruit candidate " << label_name
+                          << " box=(" << det.w << "x" << det.h << ")"
+                          << " areaRatio=" << boxAreaRatio);
+                continue;
+            }
+        }
         if (info.fruitType != FruitType::PlasticBag) {
             cv::Rect fruitRect = DetectionRect(det, cv::Size(640, 640));
             if (fruitRect.area() > 0) {
@@ -498,12 +1008,13 @@ static std::vector<FruitInfo> PostProcessYOLO(
 
         if (ConfigManager::GetInstance().GetBool("cv.rotten_spot_enable", true)
             && info.fruitType != FruitType::PlasticBag) {
-            cv::Mat modelFrame;
-            if (!frame.empty()) {
-                cv::resize(frame, modelFrame, cv::Size(640, 640));
-            }
-            float darkRatio = EstimateDarkSpotRatio(modelFrame, det);
+            float darkRatio = EstimateDarkSpotRatio(modelFrame, det, info.fruitType);
             float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.15f);
+            if (info.fruitType == FruitType::Orange) {
+                rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.07f);
+            } else if (info.fruitType == FruitType::Banana) {
+                rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_banana", rottenThreshold);
+            }
             if (darkRatio >= rottenThreshold) {
                 info.freshness = FreshnessLevel::Rotten;
             }
@@ -521,7 +1032,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
             if (detections[j].classId < 0 || detections[j].classId >= static_cast<int>(classMappings.size())) {
                 continue;
             }
-            if (classMappings[detections[j].classId].fruitType != classMappings[det.classId].fruitType) {
+            if (resolveDetection(detections[j]).fruitType != info.fruitType) {
                 continue;
             }
 
@@ -530,6 +1041,9 @@ static std::vector<FruitInfo> PostProcessYOLO(
             }
         }
     }
+
+    auto orangeFallbackDetections = DetectOrangesOpenCV(frame, acceptedFruitRects);
+    results.insert(results.end(), orangeFallbackDetections.begin(), orangeFallbackDetections.end());
 
     auto bagDetections = DetectPlasticBagsOpenCV(frame, acceptedFruitRects);
     for (const auto& bag : bagDetections) {
@@ -559,10 +1073,12 @@ void CvModelManager::StaticRecognitionInternal() {
 
     struct StaticCandidate {
         FruitType type;
-        FreshnessLevel freshness;
         float sumX;
         float sumY;
         int count;
+        int freshVotes;
+        int staleVotes;
+        int rottenVotes;
     };
     std::vector<StaticCandidate> fruitCandidates;
     StaticRecognitionResult result = {};
@@ -593,7 +1109,7 @@ void CvModelManager::StaticRecognitionInternal() {
                         if (j >= used.size()) {
                             used.resize(fruitCandidates.size(), false);
                         }
-                        if (cand.type != det.fruitType || cand.freshness != det.freshness || used[j]) {
+                        if (cand.type != det.fruitType || used[j]) {
                             continue;
                         }
 
@@ -605,15 +1121,28 @@ void CvModelManager::StaticRecognitionInternal() {
                             cand.sumX += det.locationX;
                             cand.sumY += det.locationY;
                             cand.count++;
+                            if (det.freshness == FreshnessLevel::Rotten) {
+                                cand.rottenVotes++;
+                            } else if (det.freshness == FreshnessLevel::Stale) {
+                                cand.staleVotes++;
+                            } else {
+                                cand.freshVotes++;
+                            }
                             used[j] = true;
                             matched = true;
                             break;
                         }
                     }
                     if (!matched) {
-                        fruitCandidates.push_back({det.fruitType, det.freshness,
-                                                   static_cast<float>(det.locationX),
-                                                   static_cast<float>(det.locationY), 1});
+                        StaticCandidate candidate{};
+                        candidate.type = det.fruitType;
+                        candidate.sumX = static_cast<float>(det.locationX);
+                        candidate.sumY = static_cast<float>(det.locationY);
+                        candidate.count = 1;
+                        candidate.freshVotes = det.freshness == FreshnessLevel::Fresh ? 1 : 0;
+                        candidate.staleVotes = det.freshness == FreshnessLevel::Stale ? 1 : 0;
+                        candidate.rottenVotes = det.freshness == FreshnessLevel::Rotten ? 1 : 0;
+                        fruitCandidates.push_back(candidate);
                         used.push_back(true);
                     }
                     LOG_PRINT("[CvModel]", "  Detection " << detectionIndex << ": type=" << (int)det.fruitType
@@ -638,9 +1167,21 @@ void CvModelManager::StaticRecognitionInternal() {
         if (cand.count >= kStaticConfirmThreshold) {
             FruitInfo info;
             info.fruitType = cand.type;
-            info.freshness = cand.freshness;
+            if (cand.rottenVotes * 2 >= cand.count) {
+                info.freshness = FreshnessLevel::Rotten;
+            } else if (cand.staleVotes * 2 >= cand.count) {
+                info.freshness = FreshnessLevel::Stale;
+            } else {
+                info.freshness = FreshnessLevel::Fresh;
+            }
             info.locationX = static_cast<uint8_t>(std::min(255, static_cast<int>(cand.sumX / cand.count)));
             info.locationY = static_cast<uint8_t>(std::min(255, static_cast<int>(cand.sumY / cand.count)));
+            LOG_PRINT("[CvModel]", "  StaticCandidate final type=" << (int)info.fruitType
+                      << " count=" << cand.count
+                      << " votes(fresh=" << cand.freshVotes
+                      << ", stale=" << cand.staleVotes
+                      << ", rotten=" << cand.rottenVotes << ")"
+                      << " freshness=" << (int)info.freshness);
             finalDetections.push_back(info);
         }
     }
