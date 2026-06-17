@@ -293,6 +293,7 @@ void CvModelManager::StaticRecognitionInternal() {
                         fruitCandidates.push_back({det.fruitType, det.freshness,
                                                    static_cast<float>(det.locationX),
                                                    static_cast<float>(det.locationY), 1});
+                        used.push_back(true);
                     }
                     LOG_PRINT("[CvModel]", "  Detection " << detectionIndex << ": type=" << (int)det.fruitType
                               << " pos=(" << (int)det.locationX << "," << (int)det.locationY << ")"
