@@ -1,12 +1,17 @@
 #!/bin/bash
+set -o pipefail
 
 # 1. 定义颜色常数
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT" || exit 1
+
 # 2. 日志设置
-LOG_DIR="./logs"
+LOG_DIR="$PROJECT_ROOT/logs"
 if [ ! -d "$LOG_DIR" ]; then
     mkdir -p "$LOG_DIR"
 fi
@@ -21,21 +26,42 @@ echo -e "${GREEN}>>> 开始构建 Smart Fridge 项目...${NC}"
 echo "日志记录于: $LOG_FILE"
 echo "----------------------------------------"
 
-# 3. 检查并进入 build 目录
-if [ ! -d "./build" ]; then
-    echo "创建 build 目录..."
-    mkdir build
+# 3. 检查 build 目录权限
+BUILD_DIR="$PROJECT_ROOT/build"
+if [ -e "$BUILD_DIR" ] && [ ! -w "$BUILD_DIR" ]; then
+    echo -e "${RED}build 目录不可写，无法清理或重新配置 CMake。${NC}"
+    echo -e "${YELLOW}这通常是因为之前用 sudo 执行过构建脚本，导致 build 目录归 root 所有。${NC}"
+    echo "请在 Jetson 上执行下面其中一个命令后重试："
+    echo "  sudo chown -R \$(id -u):\$(id -g) \"$BUILD_DIR\""
+    echo "或："
+    echo "  sudo rm -rf \"$BUILD_DIR\""
+    exit 1
 fi
 
-cd build || exit
+if [ ! -d "$BUILD_DIR" ]; then
+    echo "创建 build 目录..."
+    mkdir -p "$BUILD_DIR" || {
+        echo -e "${RED}创建 build 目录失败：$BUILD_DIR${NC}"
+        exit 1
+    }
+fi
+
+cd "$BUILD_DIR" || exit 1
 
 # 4. 清理旧的构建文件
 echo "正在清理旧的构建文件..."
-rm -rf *
+if ! rm -rf -- ./* ./.??* 2>/dev/null; then
+    echo -e "${RED}清理 build 目录失败，目录内可能存在当前用户无权限删除的文件。${NC}"
+    echo "请在 Jetson 上执行下面其中一个命令后重试："
+    echo "  sudo chown -R \$(id -u):\$(id -g) \"$BUILD_DIR\""
+    echo "或："
+    echo "  sudo rm -rf \"$BUILD_DIR\""
+    exit 1
+fi
 
 # 5. 运行 CMake
 echo "运行 CMake 配置..."
-cmake ..
+cmake "$PROJECT_ROOT"
 if [ $? -ne 0 ]; then
     echo -e "${RED}CMake 配置失败！详情请查看 $LOG_FILE${NC}"
     exit 1
