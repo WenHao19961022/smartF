@@ -38,10 +38,10 @@ CameraModule::~CameraModule() {
 bool CameraModule::OpenCamera() {
     CloseCamera();
 
-    mCapture.open(mCameraIndex);
+    mCapture.open(mCameraIndex, cv::CAP_V4L2);
 
     if (!mCapture.isOpened()) {
-        LOG_PRINT("[Camera]", "Failed to open camera index " << mCameraIndex);
+        LOG_PRINT("[Camera]", "Failed to open camera index " << mCameraIndex << " with V4L2 backend");
         mIsOpened.store(false);
         return false;
     }
