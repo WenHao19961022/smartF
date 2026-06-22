@@ -56,6 +56,10 @@ ConfigManager::ConfigManager() {
     mConfig["cv.orange_reclass_score_min"] = "0.03";
     mConfig["cv.orange_reclass_ratio_min"] = "0.45";
     mConfig["cv.orange_reclass_strong_ratio_min"] = "0.80";
+    mConfig["cv.orange_to_apple_reclass_enable"] = "1";
+    mConfig["cv.orange_to_apple_conf_max"] = "0.40";
+    mConfig["cv.orange_to_apple_score_min"] = "0.03";
+    mConfig["cv.orange_to_apple_dark_ratio_min"] = "0.30";
     mConfig["cv.orange_opencv_detect_enable"] = "1";
     mConfig["cv.orange_opencv_min_area_ratio"] = "0.008";
     mConfig["cv.orange_opencv_max_area_ratio"] = "0.18";
@@ -93,6 +97,7 @@ ConfigManager::ConfigManager() {
     mConfig["cv.bag_bg_edge_ratio_min"] = "0.012";
     mConfig["cv.bag_bg_close_kernel"] = "5";
     mConfig["cv.bag_white_low_contrast_enable"] = "1";
+    mConfig["cv.bag_white_low_contrast_require_background"] = "1";
     mConfig["cv.bag_white_low_contrast_v_min"] = "180";
     mConfig["cv.bag_white_low_contrast_s_max"] = "90";
     mConfig["cv.bag_white_low_contrast_texture_threshold"] = "16";

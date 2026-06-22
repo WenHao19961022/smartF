@@ -34,9 +34,12 @@ struct ResolvedDetection {
     FruitType fruitType;
     FreshnessLevel freshness;
     bool orangeReclass;
+    bool appleReclass;
     float orangeScore;
     float rottenOrangeScore;
     float orangeRatio;
+    float appleScore;
+    float darkRatio;
 };
 
 struct BagCandidate {
@@ -593,6 +596,10 @@ static void AddLowContrastWhiteBagCandidates(
     if (!ConfigManager::GetInstance().GetBool("cv.bag_white_low_contrast_enable", true)) {
         return;
     }
+    if (ConfigManager::GetInstance().GetBool("cv.bag_white_low_contrast_require_background", true)
+        && GetBagBackgroundFrame().empty()) {
+        return;
+    }
 
     cv::Mat gray;
     cv::cvtColor(modelFrame, gray, cv::COLOR_BGR2GRAY);
@@ -1073,9 +1080,12 @@ static std::vector<FruitInfo> PostProcessYOLO(
         resolved.fruitType = classMappings[det.classId].fruitType;
         resolved.freshness = classMappings[det.classId].freshness;
         resolved.orangeReclass = false;
+        resolved.appleReclass = false;
         resolved.orangeScore = det.classScores.size() > 2 ? det.classScores[2] : 0.0f;
         resolved.rottenOrangeScore = det.classScores.size() > 5 ? det.classScores[5] : 0.0f;
         resolved.orangeRatio = 0.0f;
+        resolved.appleScore = 0.0f;
+        resolved.darkRatio = 0.0f;
 
         if (resolved.fruitType == FruitType::Apple
             && ConfigManager::GetInstance().GetBool("cv.orange_color_reclass_enable", true)) {
@@ -1092,6 +1102,29 @@ static std::vector<FruitInfo> PostProcessYOLO(
                     ? FreshnessLevel::Rotten
                     : FreshnessLevel::Fresh;
                 resolved.orangeReclass = true;
+            }
+        }
+
+        if (resolved.fruitType == FruitType::Orange
+            && ConfigManager::GetInstance().GetBool("cv.orange_to_apple_reclass_enable", true)) {
+            float freshAppleScore = det.classScores.size() > 0 ? det.classScores[0] : 0.0f;
+            float rottenAppleScore = det.classScores.size() > 3 ? det.classScores[3] : 0.0f;
+            resolved.appleScore = std::max(freshAppleScore, rottenAppleScore);
+            resolved.darkRatio = EstimateDarkSpotRatio(modelFrame, det, FruitType::Orange);
+            float maxOrangeConfidence = ConfigManager::GetInstance().GetFloat(
+                "cv.orange_to_apple_conf_max", 0.40f);
+            float minAppleScore = ConfigManager::GetInstance().GetFloat(
+                "cv.orange_to_apple_score_min", 0.03f);
+            float minDarkRatio = ConfigManager::GetInstance().GetFloat(
+                "cv.orange_to_apple_dark_ratio_min", 0.30f);
+            if (det.confidence <= maxOrangeConfidence
+                && resolved.appleScore >= minAppleScore
+                && resolved.darkRatio >= minDarkRatio) {
+                resolved.fruitType = FruitType::Apple;
+                resolved.freshness = rottenAppleScore > freshAppleScore
+                    ? FreshnessLevel::Rotten
+                    : FreshnessLevel::Fresh;
+                resolved.appleReclass = true;
             }
         }
 
@@ -1201,6 +1234,12 @@ static std::vector<FruitInfo> PostProcessYOLO(
                       << " orangeScore=" << resolved.orangeScore
                       << " rottenOrangeScore=" << resolved.rottenOrangeScore
                       << " orangeRatio=" << resolved.orangeRatio);
+        }
+        if (resolved.appleReclass) {
+            LOG_PRINT("[CvModel]", "  Reclass orange->apple"
+                      << " orangeConfidence=" << det.confidence
+                      << " appleScore=" << resolved.appleScore
+                      << " darkRatio=" << resolved.darkRatio);
         }
         if (info.fruitType != FruitType::PlasticBag) {
             float minFruitAreaRatio = ConfigManager::GetInstance().GetFloat("cv.min_fruit_box_area_ratio", 0.003f);
