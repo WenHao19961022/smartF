@@ -5,11 +5,10 @@ function clamp(num, min, max) {
   return Math.max(min, Math.min(max, num));
 }
 
-function normalizeCoordinate(value) {
+function normalizeVisionCoordinate(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 50;
   if (n >= 0 && n <= 1) return clamp(n * 100, 4, 96);
-  if (n >= 0 && n <= 100) return clamp(n, 4, 96);
   return clamp((n / 255) * 100, 4, 96);
 }
 
@@ -72,8 +71,8 @@ Page({
 
         const rawX = Number(item.coordinateX || 0);
         const rawY = Number(item.coordinateY || 0);
-        const leftPct = normalizeCoordinate(rawX);
-        const topPct = normalizeCoordinate(rawY);
+        const leftPct = normalizeVisionCoordinate(rawX);
+        const topPct = normalizeVisionCoordinate(rawY);
 
         item.rawX = Number.isFinite(rawX) ? Math.round(rawX) : 0;
         item.rawY = Number.isFinite(rawY) ? Math.round(rawY) : 0;
