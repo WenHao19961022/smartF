@@ -25,6 +25,7 @@ private:
     void CheckTimers();
     void ProcessStaticResultOnly();
     void TrySendStartupNotification();
+    void SendRecognitionError(RecognitionStatus status);
 
     // V5.0: 滑动窗口稳态拼贴算法
     int32_t CalculateLocalDeltaW(uint32_t startTsMs, uint32_t endTsMs);

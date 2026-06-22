@@ -15,6 +15,10 @@ public class MqttPayloadDTO {
     @JsonProperty("event_type")
     private String eventType;
 
+    /** 0=正常，其余值表示边缘端拒绝盘点的原因。 */
+    @JsonProperty("recognition_status")
+    private Integer recognitionStatus;
+
     /** 设备唯一序列号 (对应 JSON 的 device_id) */
     @JsonProperty("device_id")
     private String deviceId;

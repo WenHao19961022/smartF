@@ -24,6 +24,14 @@ enum class FreshnessLevel : uint8_t {
     Rotten = 2
 };
 
+enum class RecognitionStatus : uint8_t {
+    Valid = 0,
+    BackgroundMissing = 1,
+    CameraMoved = 2,
+    IlluminationOutOfRange = 3,
+    InsufficientStableFrames = 4
+};
+
 // 水果变化动作：放入 / 取出
 enum class FruitChangeAction : uint8_t {
     PUT_IN   = 1,  // 放入冰箱
@@ -59,6 +67,7 @@ struct FruitChangeEvent {
 
 struct StaticRecognitionResult {
     uint32_t timestamp;
+    RecognitionStatus status;
     uint8_t fruitCount;
     FruitInfo fruits[kMaxStaticFruitCount];
 };

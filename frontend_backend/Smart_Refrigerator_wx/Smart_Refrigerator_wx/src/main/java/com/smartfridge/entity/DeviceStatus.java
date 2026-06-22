@@ -26,6 +26,11 @@ public class DeviceStatus {
 
     private String batchId;
 
+    /** 0=视觉正常，其余值对应边缘端 RecognitionStatus。 */
+    private Integer visionStatus;
+
+    private LocalDateTime visionErrorTime;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

@@ -20,6 +20,8 @@ public interface DeviceService {
      */
     void updateDeviceStatus(String deviceSn, Integer online, Float temperature, Float humidity, String messageId);
 
+    void updateVisionStatus(String deviceSn, Integer visionStatus);
+
     /**
      * 绑定设备
      */

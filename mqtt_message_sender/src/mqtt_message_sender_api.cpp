@@ -10,7 +10,7 @@ bool SendMqttMessage(const MqttMessageStruct& message) {
     }
 
     LOG_PRINT("[Mqtt]", "SendMqttMessage: entering (msgId=" << message.messageId
-              << " eventType=" << (message.eventType == MqttEventType::Startup ? "startup" : "snapshot")
+              << " eventType=" << static_cast<int>(message.eventType)
               << " fruitCount=" << (int)message.fruitCount << ")");
 
     uint8_t retryCount = 0;

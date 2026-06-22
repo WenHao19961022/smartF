@@ -9,7 +9,8 @@
 // ==================== 结构体 ====================
 enum class MqttEventType : uint8_t {
     Snapshot = 0,
-    Startup = 1
+    Startup = 1,
+    RecognitionError = 2
 };
 
 struct MqttFruitItem {
@@ -24,6 +25,7 @@ struct MqttFruitItem {
 
 struct MqttMessageStruct {
     MqttEventType eventType = MqttEventType::Snapshot;
+    RecognitionStatus recognitionStatus = RecognitionStatus::Valid;
     uint32_t time;
     uint32_t messageId;
     uint32_t deviceId;

@@ -52,7 +52,29 @@ public class DeviceServiceImpl implements DeviceService {
         statusVO.setOnline(status.getOnline());
         statusVO.setHumidity(Objects.equals(status.getOnline(), 1) ? status.getHumidity() : null);
         statusVO.setTemperature(Objects.equals(status.getOnline(), 1) ? status.getTemperature() : null);
+        statusVO.setVisionStatus(status.getVisionStatus());
+        statusVO.setVisionErrorTime(status.getVisionErrorTime());
         return statusVO;
+    }
+
+    @Override
+    public void updateVisionStatus(String deviceSn, Integer visionStatus) {
+        DeviceStatus status = deviceStatusMapper.getByDeviceSn(deviceSn);
+        if (status == null) {
+            status = new DeviceStatus();
+            status.setDeviceSn(deviceSn);
+            status.setOnline(1);
+            status.setVisionStatus(visionStatus);
+            status.setVisionErrorTime(visionStatus != null && visionStatus != 0 ? LocalDateTime.now() : null);
+            status.setCreateTime(LocalDateTime.now());
+            status.setUpdateTime(LocalDateTime.now());
+            deviceStatusMapper.insert(status);
+            return;
+        }
+        status.setVisionStatus(visionStatus);
+        if (visionStatus != null && visionStatus != 0) status.setVisionErrorTime(LocalDateTime.now());
+        status.setUpdateTime(LocalDateTime.now());
+        deviceStatusMapper.updateById(status);
     }
 
     @Override

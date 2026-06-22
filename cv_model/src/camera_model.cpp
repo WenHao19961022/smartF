@@ -49,6 +49,14 @@ bool CameraModule::OpenCamera() {
     mCapture.set(cv::CAP_PROP_FRAME_WIDTH, mWidth);
     mCapture.set(cv::CAP_PROP_FRAME_HEIGHT, mHeight);
     mCapture.set(cv::CAP_PROP_FPS, mFps);
+    if (ConfigManager::GetInstance().GetBool("camera.lock_auto_controls", true)) {
+        mCapture.set(cv::CAP_PROP_AUTO_EXPOSURE, 1.0); // V4L2 manual exposure mode
+        mCapture.set(cv::CAP_PROP_EXPOSURE,
+                     ConfigManager::GetInstance().GetInt("camera.exposure", 166));
+        mCapture.set(cv::CAP_PROP_AUTO_WB, 0.0);
+        mCapture.set(cv::CAP_PROP_WB_TEMPERATURE,
+                     ConfigManager::GetInstance().GetInt("camera.white_balance_temperature", 4600));
+    }
 
     int actualWidth = static_cast<int>(mCapture.get(cv::CAP_PROP_FRAME_WIDTH));
     int actualHeight = static_cast<int>(mCapture.get(cv::CAP_PROP_FRAME_HEIGHT));

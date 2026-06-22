@@ -78,6 +78,8 @@ CREATE TABLE device_status (
     temperature FLOAT COMMENT '温度(℃)',
     humidity FLOAT COMMENT '湿度(%)',
     batch_id VARCHAR(64) COMMENT '最后一次库存快照批次ID',
+    vision_status INT DEFAULT 0 COMMENT '视觉健康状态，0=正常',
+    vision_error_time DATETIME COMMENT '最后视觉错误时间',
     last_heartbeat DATETIME COMMENT '最后心跳时间',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

@@ -20,3 +20,22 @@ target_link_libraries(cv_model_lib
         3rd_tensorrt  # 链接上面定义好的接口库
         common_lib
 )
+
+if(BUILD_TESTING)
+    add_executable(static_scene_replay
+        tests/static_scene_replay.cpp
+        src/static_scene_analyzer.cpp
+    )
+    target_include_directories(static_scene_replay PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/api
+        ${CMAKE_SOURCE_DIR}/common/include
+        ${OpenCV_INCLUDE_DIRS}
+    )
+    target_link_libraries(static_scene_replay PRIVATE ${OpenCV_LIBS} common_lib)
+    add_test(NAME static_scene_empty_reference
+        COMMAND static_scene_replay
+            ${CMAKE_SOURCE_DIR}/config/fridge_empty_bg.jpg
+            --empty
+            ${CMAKE_SOURCE_DIR}/config/fridge_empty_bg.jpg)
+endif()

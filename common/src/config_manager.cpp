@@ -63,6 +63,8 @@ ConfigManager::ConfigManager() {
     mConfig["cv.rotten_dark_s_threshold"] = "30";
     mConfig["cv.rotten_dark_v_threshold_orange"] = "130";
     mConfig["cv.rotten_dark_s_threshold_orange"] = "30";
+    mConfig["cv.rotten_lesion_min_area_ratio"] = "0.004";
+    mConfig["cv.rotten_lesion_max_aspect"] = "5.0";
     mConfig["cv.rotten_orange_bottom_start_ratio"] = "0.55";
     mConfig["cv.rotten_orange_bottom_dark_ratio_min"] = "0.10";
     mConfig["cv.rotten_orange_bottom_contrast_min"] = "0.07";
@@ -150,12 +152,37 @@ ConfigManager::ConfigManager() {
     mConfig["cv.bag_merge_min_axis_overlap"] = "0.45";
     mConfig["cv.bag_cross_source_merge_distance"] = "30";
     mConfig["cv.static_bag_confirm_threshold"] = "2";
+    mConfig["cv.background_paths"] = "";
+    mConfig["cv.background_gain_min"] = "0.60";
+    mConfig["cv.background_gain_max"] = "1.70";
+    mConfig["cv.background_residual_max"] = "45";
+    mConfig["cv.background_geometry_residual_max"] = "38";
+    mConfig["cv.background_camera_shift_max"] = "4";
+    mConfig["cv.foreground_diff_threshold"] = "28";
+    mConfig["cv.foreground_edge_threshold"] = "30";
+    mConfig["cv.foreground_component_min_area"] = "700";
+    mConfig["cv.foreground_fruit_coverage_min"] = "0.08";
+    mConfig["cv.static_frame_count"] = "30";
+    mConfig["cv.static_min_valid_frames"] = "20";
+    mConfig["cv.static_max_frame_attempts"] = "45";
+    mConfig["cv.static_track_confirm_ratio"] = "0.70";
+    mConfig["cv.static_blur_score_min"] = "20";
+    mConfig["cv.bag_component_min_area_ratio"] = "0.008";
+    mConfig["cv.bag_component_max_area_ratio"] = "0.45";
+    mConfig["cv.bag_component_white_coverage_min"] = "0.16";
+    mConfig["cv.bag_component_edge_ratio_min"] = "0.012";
+    mConfig["cv.bag_component_print_coverage_min"] = "0.002";
+    mConfig["cv.bag_component_print_white_coverage_min"] = "0.20";
+    mConfig["cv.bag_component_unexplained_min"] = "0.35";
 
     // 摄像头配置
     mConfig["camera.index"] = "0";
     mConfig["camera.width"] = "640";
     mConfig["camera.height"] = "480";
     mConfig["camera.fps"] = "30";
+    mConfig["camera.lock_auto_controls"] = "1";
+    mConfig["camera.exposure"] = "166";
+    mConfig["camera.white_balance_temperature"] = "4600";
 
     // 业务配置
     mConfig["device.id"] = "10001";

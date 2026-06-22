@@ -21,4 +21,8 @@ public class DeviceStatusVO {
     private Float temperature;
 
     private Float humidity;
+
+    private Integer visionStatus;
+
+    private java.time.LocalDateTime visionErrorTime;
 }

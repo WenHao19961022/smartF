@@ -93,6 +93,13 @@ public class MqttMessageHandler {
                         data.getDeviceId(), data.getMessageId(), data.getMessageTime());
                 return;
             }
+            if ("recognition_error".equalsIgnoreCase(data.getEventType())) {
+                deviceService.updateVisionStatus(data.getDeviceId(), data.getRecognitionStatus());
+                log.warn("设备拒绝不可信视觉盘点: deviceId={}, msgId={}, status={}",
+                        data.getDeviceId(), data.getMessageId(), data.getRecognitionStatus());
+                return;
+            }
+            deviceService.updateVisionStatus(data.getDeviceId(), 0);
 
             // 5. 执行全量插入逻辑 (只增不减策略)
             // 逻辑由 InventoryService 内部处理：将 fruits 列表中的每项存为新记录

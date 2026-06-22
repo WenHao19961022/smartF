@@ -73,7 +73,7 @@ static bool StartStaticRecognitionWithRetry(int maxRetries = 3,
         } else {
             // 没有观察到 busy，检查结果是否是本次请求产生（timestamp >= reqTs）
             StaticRecognitionResult now = GetStaticRecognitionResult();
-            if (now.timestamp >= reqTs) {
+            if (now.timestamp >= reqTs && now.timestamp != prevTs) {
                 return true;
             }
         }
@@ -282,6 +282,24 @@ void CoreManager::TrySendStartupNotification() {
     }
 }
 
+void CoreManager::SendRecognitionError(RecognitionStatus status) {
+    MqttMessageStruct message{};
+    message.eventType = MqttEventType::RecognitionError;
+    message.recognitionStatus = status;
+    message.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    uint16_t seq = gMsgCounter.fetch_add(1);
+    message.messageId = ((message.time & 0xFFFFu) << 16) | seq;
+    message.deviceId = mDeviceId;
+    FrigeratorHistoryInfo state = GetFrigeratorInfo();
+    message.fridgeInfo.temperature = state.temperature[kFridgeHistoryInfoSize - 1];
+    message.fridgeInfo.humidity = state.humidity[kFridgeHistoryInfoSize - 1];
+    message.fridgeInfo.weight = state.weight[kFridgeHistoryInfoSize - 1];
+    message.fridgeInfo.doorStatus = state.doorStatus[kFridgeHistoryInfoSize - 1];
+    message.fruitCount = 0;
+    SendMqttMessage(message);
+}
+
 void CoreManager::HandleDoorOpen() {
     LOG_START("处理开门逻辑");
     
@@ -373,14 +391,22 @@ void CoreManager::HandleDoorClose() {
     // 启动静态检测并等待 busy，然后再等待 idle 完成（含重试）。
     bool started = StartStaticRecognitionWithRetry(3, std::chrono::milliseconds(300), std::chrono::milliseconds(200));
     if (started) {
-        // 若检测正在运行（非空闲），等待其完成（500ms 足够）
-        if (!WaitForStaticIdleTimeout(std::chrono::milliseconds(500))) {
-            LOG_WARN("等待静态识别完成超时 (500ms)");
+        if (!WaitForStaticIdleTimeout(std::chrono::milliseconds(4000))) {
+            LOG_WARN("等待静态识别完成超时 (4000ms)");
+            SendRecognitionError(RecognitionStatus::InsufficientStableFrames);
+            return;
         }
     } else {
-        LOG_WARN("静态检测启动未成功，继续使用可能已存在的静态结果");
+        LOG_ERR("静态检测启动失败，拒绝使用旧结果");
+        SendRecognitionError(RecognitionStatus::InsufficientStableFrames);
+        return;
     }
     StaticRecognitionResult stat = GetStaticRecognitionResult();
+    if (stat.status != RecognitionStatus::Valid) {
+        LOG_ERR("静态识别无效，拒绝库存对账 | status=" << static_cast<int>(stat.status));
+        SendRecognitionError(stat.status);
+        return;
+    }
 
     uint16_t finalStableWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
     uint32_t closeTsMs = GetCurrentTimeMs();
@@ -516,6 +542,11 @@ void CoreManager::ProcessStaticResultOnly() {
     LOG_START("处理定时静态检测结果");
     mIsStaticWaiting = false;
     StaticRecognitionResult stat = GetStaticRecognitionResult();
+    if (stat.status != RecognitionStatus::Valid) {
+        LOG_ERR("定时静态识别无效，保留原库存 | status=" << static_cast<int>(stat.status));
+        SendRecognitionError(stat.status);
+        return;
+    }
 
     LOG_DATA("Static result: fruitCount=" << (int)stat.fruitCount << " | timestamp=" << stat.timestamp);
     for (uint8_t i = 0; i < stat.fruitCount; ++i) {
