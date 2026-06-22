@@ -184,8 +184,15 @@ static bool AcceptBagContour(
 
 static void AddBagCandidate(std::vector<BagCandidate>& bags, const BagCandidate& candidate) {
     for (auto& bag : bags) {
-        if (RectIoU(bag.rect, candidate.rect) > 0.35f) {
-            if (candidate.score > bag.score) {
+        int interArea = (bag.rect & candidate.rect).area();
+        int minArea = std::min(bag.rect.area(), candidate.rect.area());
+        float smallerOverlap = minArea > 0 ? static_cast<float>(interArea) / static_cast<float>(minArea) : 0.0f;
+        float iou = RectIoU(bag.rect, candidate.rect);
+        if (iou > 0.35f || smallerOverlap > 0.65f) {
+            bool preferCandidate = iou > 0.35f
+                ? candidate.score > bag.score
+                : candidate.rect.area() > bag.rect.area();
+            if (preferCandidate) {
                 bag = candidate;
             }
             return;
@@ -493,6 +500,124 @@ static void AddForegroundBagCandidates(
     }
 }
 
+static void AddLowContrastWhiteBagCandidates(
+    const cv::Mat& modelFrame,
+    const cv::Mat& whiteMask,
+    const cv::Mat& edges,
+    const cv::Mat& hsv,
+    const std::vector<cv::Rect>& fruitRects,
+    std::vector<BagCandidate>& candidates)
+{
+    if (!ConfigManager::GetInstance().GetBool("cv.bag_white_low_contrast_enable", true)) {
+        return;
+    }
+
+    cv::Mat gray;
+    cv::cvtColor(modelFrame, gray, cv::COLOR_BGR2GRAY);
+
+    int supportVMin = ConfigManager::GetInstance().GetInt("cv.bag_white_low_contrast_v_min", 180);
+    int supportSMax = ConfigManager::GetInstance().GetInt("cv.bag_white_low_contrast_s_max", 90);
+    cv::Mat supportMask;
+    cv::inRange(hsv, cv::Scalar(0, 0, supportVMin), cv::Scalar(180, supportSMax, 255), supportMask);
+
+    cv::Mat candidateMask = supportMask.clone();
+
+    float topIgnoreRatio = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_top_ignore_ratio", 0.12f);
+    float bottomLimitRatio = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_bottom_limit_ratio", 0.55f);
+    float sideMarginRatio = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_side_margin_ratio", 0.12f);
+    int topIgnore = static_cast<int>(candidateMask.rows * topIgnoreRatio);
+    int bottomLimit = static_cast<int>(candidateMask.rows * bottomLimitRatio);
+    int sideMargin = static_cast<int>(candidateMask.cols * sideMarginRatio);
+    if (topIgnore > 0) {
+        candidateMask(cv::Rect(0, 0, candidateMask.cols, std::min(topIgnore, candidateMask.rows))).setTo(0);
+    }
+    if (bottomLimit < candidateMask.rows) {
+        candidateMask(cv::Rect(0, std::max(0, bottomLimit), candidateMask.cols,
+                               candidateMask.rows - std::max(0, bottomLimit))).setTo(0);
+    }
+    if (sideMargin > 0 && sideMargin * 2 < candidateMask.cols) {
+        candidateMask(cv::Rect(0, 0, sideMargin, candidateMask.rows)).setTo(0);
+        candidateMask(cv::Rect(candidateMask.cols - sideMargin, 0, sideMargin, candidateMask.rows)).setTo(0);
+    }
+
+    cv::morphologyEx(candidateMask, candidateMask, cv::MORPH_OPEN,
+                     cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7)));
+    cv::morphologyEx(candidateMask, candidateMask, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_RECT, cv::Size(31, 31)));
+
+    float minAreaRatio = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_min_area_ratio", 0.04f);
+    float maxAreaRatio = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_max_area_ratio", 0.22f);
+    int minWidth = ConfigManager::GetInstance().GetInt("cv.bag_white_low_contrast_min_width", 120);
+    int minHeight = ConfigManager::GetInstance().GetInt("cv.bag_white_low_contrast_min_height", 110);
+    float maxBottomRatio = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_max_bottom_ratio", 0.58f);
+    float centerXMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_center_x_min", 0.35f);
+    float centerXMax = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_center_x_max", 0.68f);
+    float minAspect = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_min_aspect", 0.75f);
+    float maxAspect = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_max_aspect", 2.2f);
+    float minCoverage = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_min_coverage", 0.45f);
+    float meanSMax = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_mean_s_max", 55.0f);
+    float stddevMin = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_stddev_min", 18.0f);
+    float scoreBias = ConfigManager::GetInstance().GetFloat("cv.bag_white_low_contrast_score_bias", 0.25f);
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(candidateMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    double frameArea = static_cast<double>(candidateMask.rows * candidateMask.cols);
+    for (const auto& contour : contours) {
+        double contourArea = cv::contourArea(contour);
+        float areaRatio = static_cast<float>(contourArea / frameArea);
+        if (areaRatio < minAreaRatio || areaRatio > maxAreaRatio) {
+            continue;
+        }
+
+        cv::Rect rect = cv::boundingRect(contour);
+        if (rect.width < minWidth || rect.height < minHeight) {
+            continue;
+        }
+        if (static_cast<float>(rect.y + rect.height) / candidateMask.rows > maxBottomRatio) {
+            continue;
+        }
+        float centerX = static_cast<float>(rect.x + rect.width * 0.5f) / candidateMask.cols;
+        if (centerX < centerXMin || centerX > centerXMax) {
+            continue;
+        }
+        float aspect = static_cast<float>(rect.width) / static_cast<float>(rect.height);
+        if (aspect < minAspect || aspect > maxAspect) {
+            continue;
+        }
+        if (OverlapsKnownFruit(rect, fruitRects)) {
+            continue;
+        }
+
+        float rectArea = static_cast<float>(rect.area());
+        float whiteCoverage = static_cast<float>(cv::countNonZero(supportMask(rect))) / rectArea;
+        if (whiteCoverage < minCoverage) {
+            continue;
+        }
+
+        cv::Mat hsvRoi = hsv(rect);
+        std::vector<cv::Mat> hsvChannels;
+        cv::split(hsvRoi, hsvChannels);
+        float meanSaturation = static_cast<float>(cv::mean(hsvChannels[1])[0]);
+        if (meanSaturation > meanSMax) {
+            continue;
+        }
+
+        cv::Scalar meanGray;
+        cv::Scalar stdGray;
+        cv::meanStdDev(gray(rect), meanGray, stdGray);
+        float grayStddev = static_cast<float>(stdGray[0]);
+        if (grayStddev < stddevMin) {
+            continue;
+        }
+
+        float edgeRatio = static_cast<float>(cv::countNonZero(edges(rect))) / rectArea;
+        float score = scoreBias + areaRatio + whiteCoverage * 0.15f + edgeRatio
+            + grayStddev * 0.001f + std::max(0.0f, meanSMax - meanSaturation) * 0.001f;
+        score = std::min(0.99f, score);
+        AddBagCandidate(candidates, {rect, score, "white"});
+    }
+}
+
 static std::vector<FruitInfo> DetectOrangesOpenCV(
     const cv::Mat& frame,
     std::vector<cv::Rect>& fruitRects)
@@ -571,7 +696,7 @@ static std::vector<FruitInfo> DetectOrangesOpenCV(
         pseudoDet.classId = 2;
 
         float darkRatio = EstimateDarkSpotRatio(modelFrame, pseudoDet, FruitType::Orange);
-        float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.07f);
+        float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.18f);
 
         FruitInfo info;
         info.fruitType = FruitType::Orange;
@@ -663,6 +788,7 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
     cv::dilate(whiteMask, whiteSupportMask, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7)));
 
     AddForegroundBagCandidates(modelFrame, redMask, whiteMask, edges, hsv, fruitRects, candidates);
+    AddLowContrastWhiteBagCandidates(modelFrame, whiteMask, edges, hsv, fruitRects, candidates);
 
     contours.clear();
     cv::findContours(whiteMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -1011,7 +1137,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
             float darkRatio = EstimateDarkSpotRatio(modelFrame, det, info.fruitType);
             float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.15f);
             if (info.fruitType == FruitType::Orange) {
-                rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.07f);
+                rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.18f);
             } else if (info.fruitType == FruitType::Banana) {
                 rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_banana", rottenThreshold);
             }
@@ -1164,7 +1290,11 @@ void CvModelManager::StaticRecognitionInternal() {
     // 多数确认
     std::vector<FruitInfo> finalDetections;
     for (const auto& cand : fruitCandidates) {
-        if (cand.count >= kStaticConfirmThreshold) {
+        int confirmThreshold = kStaticConfirmThreshold;
+        if (cand.type == FruitType::PlasticBag) {
+            confirmThreshold = ConfigManager::GetInstance().GetInt("cv.static_bag_confirm_threshold", 1);
+        }
+        if (cand.count >= confirmThreshold) {
             FruitInfo info;
             info.fruitType = cand.type;
             if (cand.rottenVotes * 2 >= cand.count) {

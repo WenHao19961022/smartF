@@ -364,12 +364,12 @@ void CoreManager::HandleDoorClose() {
             uint32_t endTs = cluster.back().timestamp;
 
             int32_t clusterDeltaW = CalculateLocalDeltaW(startTs, endTs);
-            int direction = (clusterDeltaW > 5) ? 1 : ((clusterDeltaW < -5) ? -1 : 0);
             int32_t avgDeltaW = clusterDeltaW / static_cast<int32_t>(cluster.size());
 
             for (const auto& ev : cluster) {
                 draftWeightDelta[ev.fruitType] += avgDeltaW;
-                dynCountDelta[ev.fruitType] += direction;
+                dynCountDelta[ev.fruitType] +=
+                    (ev.action == FruitChangeAction::PUT_IN) ? 1 : -1;
             }
         }
     }

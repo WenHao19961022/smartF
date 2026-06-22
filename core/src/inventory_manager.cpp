@@ -115,8 +115,10 @@ void InventoryManager::Reconcile(
     bool noPutInWeightEvidence = physicalDelta < kWeightEvidenceThreshold;
 
     // 遮挡修正：视觉少看见了水果，但 STM32 总重量没有对应下降时，不把它当作取出。
+    // 如果动态识别也确认了同类 TAKE_OUT，则认为视觉证据足够，避免称重采样未对齐导致手机端数量不减少。
     for (auto& [type, delta] : realCountDelta) {
-        if (delta < 0 && noRemovalWeightEvidence) {
+        int32_t dynDelta = dynCountDelta.count(type) ? dynCountDelta.at(type) : 0;
+        if (delta < 0 && noRemovalWeightEvidence && dynDelta >= 0) {
             LOG_WARN("遮挡保护: 静态识别显示 type=" << (int)type << " 少了 " << std::abs(delta)
                      << " 个，但重量变化仅 " << physicalDelta << "g，保留库存数量");
             delta = 0;
@@ -125,11 +127,12 @@ void InventoryManager::Reconcile(
 
     // 动态误报修正：动态说取出/放入，但重量方向没有支持时，降低其对对账的影响。
     for (auto& [type, delta] : effectiveDynCountDelta) {
-        if (delta < 0 && noRemovalWeightEvidence) {
+        int32_t staticDelta = realCountDelta.count(type) ? realCountDelta.at(type) : 0;
+        if (delta < 0 && noRemovalWeightEvidence && staticDelta >= 0) {
             LOG_WARN("遮挡保护: 动态识别疑似误报 TAKE_OUT type=" << (int)type
                      << "，重量变化=" << physicalDelta << "g，忽略该动态数量变化");
             delta = 0;
-        } else if (delta > 0 && noPutInWeightEvidence) {
+        } else if (delta > 0 && noPutInWeightEvidence && staticDelta <= 0) {
             LOG_WARN("重量保护: 动态识别疑似误报 PUT_IN type=" << (int)type
                      << "，重量变化=" << physicalDelta << "g，忽略该动态数量变化");
             delta = 0;

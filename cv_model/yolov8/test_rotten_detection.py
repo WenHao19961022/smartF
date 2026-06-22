@@ -128,8 +128,18 @@ def accept_bag_contour(contour, mask, min_area_ratio, max_area_ratio):
 
 def add_bag_candidate(candidates, candidate):
     for index, existing in enumerate(candidates):
-        if rect_iou(existing["rect"], candidate["rect"]) > 0.35:
-            if candidate["score"] > existing["score"]:
+        ex, ey, ew, eh = existing["rect"]
+        cx, cy, cw, ch = candidate["rect"]
+        x1 = max(ex, cx)
+        y1 = max(ey, cy)
+        x2 = min(ex + ew, cx + cw)
+        y2 = min(ey + eh, cy + ch)
+        inter = max(0, x2 - x1) * max(0, y2 - y1)
+        smaller_overlap = inter / max(1, min(ew * eh, cw * ch))
+        iou = rect_iou(existing["rect"], candidate["rect"])
+        if iou > 0.35 or smaller_overlap > 0.65:
+            prefer_candidate = candidate["score"] > existing["score"] if iou > 0.35 else cw * ch > ew * eh
+            if prefer_candidate:
                 candidates[index] = candidate
             return
     candidates.append(candidate)
@@ -470,6 +480,77 @@ def add_background_bag_candidates(image, red_mask, white_mask, edges, hsv, fruit
         add_bag_candidate(candidates, {"rect": rect, "score": score, "color": color})
 
 
+def add_low_contrast_white_bag_candidates(image, white_mask, edges, hsv, fruit_rects, candidates, args):
+    if not args.bag_white_low_contrast:
+        return
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    support = cv2.inRange(
+        hsv,
+        (0, 0, args.bag_white_low_contrast_v_min),
+        (180, args.bag_white_low_contrast_s_max, 255),
+    )
+    mask = support.copy()
+
+    height, width = mask.shape
+    mask[: int(height * args.bag_white_low_contrast_top_ignore_ratio), :] = 0
+    mask[int(height * args.bag_white_low_contrast_bottom_limit_ratio) :, :] = 0
+    side_margin = int(width * args.bag_white_low_contrast_side_margin_ratio)
+    mask[:, :side_margin] = 0
+    mask[:, width - side_margin :] = 0
+
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31)))
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    frame_area = float(width * height)
+    for contour in contours:
+        area_ratio = cv2.contourArea(contour) / frame_area
+        if area_ratio < args.bag_white_low_contrast_min_area or area_ratio > args.bag_white_low_contrast_max_area:
+            continue
+
+        rect = cv2.boundingRect(contour)
+        x, y, w, h = rect
+        if w < args.bag_white_low_contrast_min_width or h < args.bag_white_low_contrast_min_height:
+            continue
+        if (y + h) / height > args.bag_white_low_contrast_max_bottom_ratio:
+            continue
+        center_x = (x + w * 0.5) / width
+        if center_x < args.bag_white_low_contrast_center_x_min or center_x > args.bag_white_low_contrast_center_x_max:
+            continue
+        aspect = w / h
+        if aspect < args.bag_white_low_contrast_min_aspect or aspect > args.bag_white_low_contrast_max_aspect:
+            continue
+        if overlaps_known_fruit(rect, fruit_rects, args.bag_fruit_overlap_max):
+            continue
+
+        rect_area = max(1, w * h)
+        white_coverage = cv2.countNonZero(support[y:y + h, x:x + w]) / rect_area
+        if white_coverage < args.bag_white_low_contrast_min_coverage:
+            continue
+
+        hsv_roi = hsv[y:y + h, x:x + w]
+        mean_saturation = float(hsv_roi[:, :, 1].mean())
+        if mean_saturation > args.bag_white_low_contrast_mean_s_max:
+            continue
+
+        gray_stddev = float(gray[y:y + h, x:x + w].std())
+        if gray_stddev < args.bag_white_low_contrast_stddev_min:
+            continue
+
+        edge_ratio = cv2.countNonZero(edges[y:y + h, x:x + w]) / rect_area
+        score = (
+            args.bag_white_low_contrast_score_bias
+            + area_ratio
+            + white_coverage * 0.15
+            + edge_ratio
+            + gray_stddev * 0.001
+            + max(0.0, args.bag_white_low_contrast_mean_s_max - mean_saturation) * 0.001
+        )
+        score = min(0.99, score)
+        add_bag_candidate(candidates, {"rect": rect, "score": score, "color": "white"})
+
+
 def detect_plastic_bags_opencv(image, detections, args):
     if args.no_bag:
         return []
@@ -511,6 +592,7 @@ def detect_plastic_bags_opencv(image, detections, args):
     white_support_mask = cv2.dilate(white_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
 
     add_background_bag_candidates(resized, red_mask, white_mask, edges, hsv, fruit_rects, candidates, args)
+    add_low_contrast_white_bag_candidates(resized, white_mask, edges, hsv, fruit_rects, candidates, args)
 
     contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for contour in contours:
@@ -801,7 +883,7 @@ def main():
     parser.add_argument("--min-fruit-box-area-ratio", type=float, default=0.003, help="Drop tiny fruit boxes below this area ratio")
     parser.add_argument("--min-fruit-box-side", type=float, default=36.0, help="Drop fruit boxes with width/height below this size")
     parser.add_argument("--rotten-dark-ratio-threshold", type=float, default=0.15, help="Default dark spot ratio threshold")
-    parser.add_argument("--rotten-dark-ratio-threshold-orange", type=float, default=0.07, help="Dark spot ratio threshold for oranges")
+    parser.add_argument("--rotten-dark-ratio-threshold-orange", type=float, default=0.18, help="Dark spot ratio threshold for oranges")
     parser.add_argument("--rotten-dark-ratio-threshold-banana", type=float, default=0.15, help="Dark spot ratio threshold for bananas")
     parser.add_argument("--rotten-dark-v-threshold", type=int, default=80, help="Default maximum V for dark spot mask")
     parser.add_argument("--rotten-dark-s-threshold", type=int, default=30, help="Default minimum S for dark spot mask")
@@ -846,6 +928,26 @@ def main():
     parser.add_argument("--bag-bg-red-coverage-min", type=float, default=0.04, help="Minimum red coverage for foreground bag")
     parser.add_argument("--bag-bg-edge-min", type=float, default=0.012, help="Minimum edge density for foreground bag")
     parser.add_argument("--bag-bg-close-kernel", type=int, default=5, help="Morph close kernel size for foreground bag mask")
+    parser.add_argument("--bag-white-low-contrast", action="store_true", default=True, help="Enable low-contrast white bag texture detection")
+    parser.add_argument("--bag-white-low-contrast-v-min", type=int, default=180, help="Minimum brightness for low-contrast white bag support")
+    parser.add_argument("--bag-white-low-contrast-s-max", type=int, default=90, help="Maximum saturation for low-contrast white bag support")
+    parser.add_argument("--bag-white-low-contrast-texture-threshold", type=int, default=16, help="Local contrast threshold for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-top-ignore-ratio", type=float, default=0.12, help="Ignore this top image ratio for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-bottom-limit-ratio", type=float, default=0.55, help="Only search above this image ratio for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-side-margin-ratio", type=float, default=0.12, help="Ignore side margins for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-min-area", type=float, default=0.04, help="Minimum low-contrast white bag area ratio")
+    parser.add_argument("--bag-white-low-contrast-max-area", type=float, default=0.22, help="Maximum low-contrast white bag area ratio")
+    parser.add_argument("--bag-white-low-contrast-min-width", type=int, default=120, help="Minimum low-contrast white bag width")
+    parser.add_argument("--bag-white-low-contrast-min-height", type=int, default=110, help="Minimum low-contrast white bag height")
+    parser.add_argument("--bag-white-low-contrast-max-bottom-ratio", type=float, default=0.58, help="Reject low-contrast white bags extending below this ratio")
+    parser.add_argument("--bag-white-low-contrast-center-x-min", type=float, default=0.35, help="Minimum normalized center x for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-center-x-max", type=float, default=0.68, help="Maximum normalized center x for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-min-aspect", type=float, default=0.75, help="Minimum aspect ratio for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-max-aspect", type=float, default=2.2, help="Maximum aspect ratio for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-min-coverage", type=float, default=0.45, help="Minimum support coverage for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-mean-s-max", type=float, default=55.0, help="Maximum mean saturation for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-stddev-min", type=float, default=18.0, help="Minimum gray stddev for low-contrast white bags")
+    parser.add_argument("--bag-white-low-contrast-score-bias", type=float, default=0.25, help="Score calibration bias for low-contrast white bags")
     parser.add_argument("--bag-fruit-overlap-max", type=float, default=0.35, help="Reject bag candidates mostly covered by fruit detections")
     args = parser.parse_args()
 

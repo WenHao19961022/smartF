@@ -39,7 +39,7 @@ ConfigManager::ConfigManager() {
     mConfig["cv.min_fruit_box_side"] = "36";
     mConfig["cv.rotten_spot_enable"] = "1";
     mConfig["cv.rotten_dark_ratio_threshold"] = "0.15";
-    mConfig["cv.rotten_dark_ratio_threshold_orange"] = "0.07";
+    mConfig["cv.rotten_dark_ratio_threshold_orange"] = "0.18";
     mConfig["cv.rotten_dark_ratio_threshold_banana"] = "0.15";
     mConfig["cv.rotten_dark_v_threshold"] = "80";
     mConfig["cv.rotten_dark_s_threshold"] = "30";
@@ -85,7 +85,28 @@ ConfigManager::ConfigManager() {
     mConfig["cv.bag_bg_red_coverage_min"] = "0.04";
     mConfig["cv.bag_bg_edge_ratio_min"] = "0.012";
     mConfig["cv.bag_bg_close_kernel"] = "5";
+    mConfig["cv.bag_white_low_contrast_enable"] = "1";
+    mConfig["cv.bag_white_low_contrast_v_min"] = "180";
+    mConfig["cv.bag_white_low_contrast_s_max"] = "90";
+    mConfig["cv.bag_white_low_contrast_texture_threshold"] = "16";
+    mConfig["cv.bag_white_low_contrast_top_ignore_ratio"] = "0.12";
+    mConfig["cv.bag_white_low_contrast_bottom_limit_ratio"] = "0.55";
+    mConfig["cv.bag_white_low_contrast_side_margin_ratio"] = "0.12";
+    mConfig["cv.bag_white_low_contrast_min_area_ratio"] = "0.04";
+    mConfig["cv.bag_white_low_contrast_max_area_ratio"] = "0.22";
+    mConfig["cv.bag_white_low_contrast_min_width"] = "120";
+    mConfig["cv.bag_white_low_contrast_min_height"] = "110";
+    mConfig["cv.bag_white_low_contrast_max_bottom_ratio"] = "0.58";
+    mConfig["cv.bag_white_low_contrast_center_x_min"] = "0.35";
+    mConfig["cv.bag_white_low_contrast_center_x_max"] = "0.68";
+    mConfig["cv.bag_white_low_contrast_min_aspect"] = "0.75";
+    mConfig["cv.bag_white_low_contrast_max_aspect"] = "2.2";
+    mConfig["cv.bag_white_low_contrast_min_coverage"] = "0.45";
+    mConfig["cv.bag_white_low_contrast_mean_s_max"] = "55";
+    mConfig["cv.bag_white_low_contrast_stddev_min"] = "18";
+    mConfig["cv.bag_white_low_contrast_score_bias"] = "0.25";
     mConfig["cv.bag_fruit_overlap_max"] = "0.35";
+    mConfig["cv.static_bag_confirm_threshold"] = "1";
 
     // 摄像头配置
     mConfig["camera.index"] = "0";
