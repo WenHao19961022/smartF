@@ -132,6 +132,7 @@ void MessageSenderManager::CopyMessage(const MqttMessageStruct& message) {
     mMessage = message;
     LOG_PRINT("[Mqtt]", "CopyMessage: deviceId=" << message.deviceId
               << " | msgId=" << message.messageId
+              << " | eventType=" << (message.eventType == MqttEventType::Startup ? "startup" : "snapshot")
               << " | time=" << message.time
               << " | fruitCount=" << (int)message.fruitCount
               << " | temp=" << message.fridgeInfo.temperature << "C"
@@ -291,6 +292,10 @@ std::string SerializeMqttMessageToJson(const MqttMessageStruct& message) {
     std::ostringstream json;
 
     json << "{\n";
+
+    json << "  \"event_type\": \""
+         << (message.eventType == MqttEventType::Startup ? "startup" : "snapshot")
+         << "\",\n";
 
     // 设备ID
     json << "  \"device_id\": \"" << GenerateDeviceId(message.deviceId) << "\",\n";

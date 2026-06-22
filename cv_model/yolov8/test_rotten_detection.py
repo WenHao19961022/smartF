@@ -58,6 +58,36 @@ def dark_spot_ratio(image, det, args):
     return cv2.countNonZero(dark_mask) / fruit_pixels
 
 
+def orange_bottom_rot(image, det, args):
+    resized = cv2.resize(image, (640, 640))
+    rect = detection_rect(det)
+    if rect is None:
+        return False, 0.0, 0.0
+    x, y, w, h = rect
+    if w < 12 or h < 20:
+        return False, 0.0, 0.0
+    hsv = cv2.cvtColor(resized[y:y + h, x:x + w], cv2.COLOR_BGR2HSV)
+    dark = cv2.inRange(
+        hsv,
+        (0, args.rotten_dark_s_threshold_orange, 0),
+        (180, 255, args.rotten_dark_v_threshold_orange),
+    )
+    fruit = cv2.inRange(hsv, (0, 35, 40), (180, 255, 255))
+    fruit = cv2.bitwise_or(fruit, dark)
+    split = max(1, min(h - 1, round(h * args.rotten_orange_bottom_start_ratio)))
+
+    def ratio(mask, support):
+        return cv2.countNonZero(mask) / max(1, cv2.countNonZero(support))
+
+    top = ratio(dark[:split], fruit[:split])
+    bottom = ratio(dark[split:], fruit[split:])
+    rotten = (
+        bottom >= args.rotten_orange_bottom_dark_ratio_min
+        and bottom - top >= args.rotten_orange_bottom_contrast_min
+    )
+    return rotten, top, bottom
+
+
 def orange_peel_ratio(image, det):
     resized = cv2.resize(image, (640, 640))
     x1 = max(0, int(round(det["cx"] - det["w"] * 0.5)))
@@ -213,6 +243,10 @@ def detect_oranges_opencv(image, detections, args):
         x, y, w, h = cv2.boundingRect(contour)
         if w < args.min_fruit_box_side or h < args.min_fruit_box_side:
             continue
+        if args.orange_opencv_reject_border_touch and touches_image_border(
+            (x, y, w, h), orange_mask.shape[1], orange_mask.shape[0], args.orange_opencv_border_margin
+        ):
+            continue
         aspect = w / h
         if aspect < args.orange_opencv_min_aspect or aspect > args.orange_opencv_max_aspect:
             continue
@@ -247,7 +281,10 @@ def detect_oranges_opencv(image, detections, args):
             "color_reclass": "opencv_orange",
         }
         det["dark_ratio"] = dark_spot_ratio(image, det, args)
-        det["spot_rotten"] = det["dark_ratio"] >= args.rotten_dark_ratio_threshold_orange
+        bottom_rotten, det["top_dark_ratio"], det["bottom_dark_ratio"] = orange_bottom_rot(image, det, args)
+        det["spot_rotten"] = (
+            det["dark_ratio"] >= args.rotten_dark_ratio_threshold_orange or bottom_rotten
+        )
         det["final_label"] = final_label(det)
         oranges.append(det)
         fruit_rects.append(rect)
@@ -483,6 +520,8 @@ def add_background_bag_candidates(image, red_mask, white_mask, edges, hsv, fruit
 def add_low_contrast_white_bag_candidates(image, white_mask, edges, hsv, fruit_rects, candidates, args):
     if not args.bag_white_low_contrast:
         return
+    if args.bag_white_low_contrast_require_background and not args.background:
+        return
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     support = cv2.inRange(
@@ -551,6 +590,44 @@ def add_low_contrast_white_bag_candidates(image, white_mask, edges, hsv, fruit_r
         add_bag_candidate(candidates, {"rect": rect, "score": score, "color": "white"})
 
 
+def add_printed_white_bag_candidates(hsv, fruit_rects, candidates, args):
+    if not args.bag_printed_white:
+        return
+    mask = cv2.inRange(
+        hsv,
+        (args.bag_print_h_min, args.bag_print_s_min, 40),
+        (args.bag_print_h_max, 255, 255),
+    )
+    height, width = mask.shape
+    mask[: int(height * args.bag_print_top_ratio)] = 0
+    mask[int(height * args.bag_print_bottom_ratio) :] = 0
+    side = int(width * args.bag_print_side_margin_ratio)
+    mask[:, :side] = 0
+    mask[:, width - side :] = 0
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+    mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31)))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < args.bag_print_min_area:
+            continue
+        x, y, w, h = cv2.boundingRect(contour)
+        rect = clamp_rect(
+            (x - args.bag_print_expand_x, y - args.bag_print_expand_y,
+             w + args.bag_print_expand_x * 2, h + args.bag_print_expand_y * 2),
+            width,
+            height,
+        )
+        if rect is None or overlaps_known_fruit(rect, fruit_rects, args.bag_fruit_overlap_max):
+            continue
+        add_bag_candidate(candidates, {
+            "rect": rect,
+            "score": min(0.99, 0.5 + area / 10000.0),
+            "color": "white_printed",
+        })
+
+
 def detect_plastic_bags_opencv(image, detections, args):
     if args.no_bag:
         return []
@@ -593,6 +670,7 @@ def detect_plastic_bags_opencv(image, detections, args):
 
     add_background_bag_candidates(resized, red_mask, white_mask, edges, hsv, fruit_rects, candidates, args)
     add_low_contrast_white_bag_candidates(resized, white_mask, edges, hsv, fruit_rects, candidates, args)
+    add_printed_white_bag_candidates(hsv, fruit_rects, candidates, args)
 
     contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for contour in contours:
@@ -728,7 +806,12 @@ def infer_image(net, image, args):
             rotten_threshold = args.rotten_dark_ratio_threshold_orange
         elif det["class_id"] in (1, 4):
             rotten_threshold = args.rotten_dark_ratio_threshold_banana
-        det["spot_rotten"] = det["dark_ratio"] >= rotten_threshold
+        bottom_rotten = False
+        det["top_dark_ratio"] = 0.0
+        det["bottom_dark_ratio"] = 0.0
+        if det["class_id"] in (2, 5):
+            bottom_rotten, det["top_dark_ratio"], det["bottom_dark_ratio"] = orange_bottom_rot(image, det, args)
+        det["spot_rotten"] = det["dark_ratio"] >= rotten_threshold or bottom_rotten
         det["final_label"] = final_label(det)
     detections = nms_detections(detections, args.nms)
     detections.extend(detect_oranges_opencv(image, detections, args))
@@ -755,6 +838,8 @@ def print_detections(title, detections, bags, topk):
             f"orange_ratio={det.get('orange_ratio', 0.0):.3f} "
             f"reclass={det.get('color_reclass', '')} "
             f"dark_ratio={det.get('dark_ratio', 0.0):.3f} "
+            f"top_dark={det.get('top_dark_ratio', 0.0):.3f} "
+            f"bottom_dark={det.get('bottom_dark_ratio', 0.0):.3f} "
             f"spot_rotten={det.get('spot_rotten', False)} "
             f"box(cx={det['cx']:.1f}, cy={det['cy']:.1f}, "
             f"w={det['w']:.1f}, h={det['h']:.1f})"
@@ -861,11 +946,17 @@ def run_camera(args, net):
             title = f"camera_{args.camera}_{time.strftime('%Y%m%d_%H%M%S')}_{frame_index:03d}"
             print_detections(title, detections, bags, args.topk)
             save_debug_outputs(args, title, frame, detections, bags)
+            if args.show:
+                cv2.imshow("Smart Fridge CV Test", annotate_image(frame, detections, bags, args.topk))
+                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                    break
             if args.frames > 0 and frame_index >= args.frames:
                 break
             time.sleep(args.interval)
     finally:
         cap.release()
+        if args.show:
+            cv2.destroyAllWindows()
 
 
 def main():
@@ -879,16 +970,20 @@ def main():
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between camera tests")
     parser.add_argument("--frames", type=int, default=0, help="Number of camera frames to process before exiting; 0 means forever")
     parser.add_argument("--save-debug", help="Directory to save raw and annotated debug images")
+    parser.add_argument("--show", action="store_true", help="Show live annotated camera frames; press Q or Esc to stop")
     parser.add_argument("--background", help="Empty-fridge background image for foreground bag detection")
     parser.add_argument("--min-fruit-box-area-ratio", type=float, default=0.003, help="Drop tiny fruit boxes below this area ratio")
     parser.add_argument("--min-fruit-box-side", type=float, default=36.0, help="Drop fruit boxes with width/height below this size")
     parser.add_argument("--rotten-dark-ratio-threshold", type=float, default=0.15, help="Default dark spot ratio threshold")
     parser.add_argument("--rotten-dark-ratio-threshold-orange", type=float, default=0.18, help="Dark spot ratio threshold for oranges")
-    parser.add_argument("--rotten-dark-ratio-threshold-banana", type=float, default=0.15, help="Dark spot ratio threshold for bananas")
+    parser.add_argument("--rotten-dark-ratio-threshold-banana", type=float, default=0.30, help="Dark spot ratio threshold for bananas")
     parser.add_argument("--rotten-dark-v-threshold", type=int, default=80, help="Default maximum V for dark spot mask")
     parser.add_argument("--rotten-dark-s-threshold", type=int, default=30, help="Default minimum S for dark spot mask")
     parser.add_argument("--rotten-dark-v-threshold-orange", type=int, default=130, help="Orange maximum V for brown/dark spot mask")
     parser.add_argument("--rotten-dark-s-threshold-orange", type=int, default=30, help="Orange minimum S for brown/dark spot mask")
+    parser.add_argument("--rotten-orange-bottom-start-ratio", type=float, default=0.55, help="Start of the lower orange region")
+    parser.add_argument("--rotten-orange-bottom-dark-ratio-min", type=float, default=0.10, help="Minimum lower-region dark ratio for rotten orange")
+    parser.add_argument("--rotten-orange-bottom-contrast-min", type=float, default=0.07, help="Minimum bottom-minus-top dark ratio for rotten orange")
     parser.add_argument("--orange-color-reclass", action="store_true", default=True, help="Reclass apple-like detections to orange using color")
     parser.add_argument("--orange-reclass-score-min", type=float, default=0.03, help="Minimum orange class score for apple-to-orange reclass")
     parser.add_argument("--orange-reclass-ratio-min", type=float, default=0.45, help="Minimum orange pixel ratio for apple-to-orange reclass")
@@ -900,6 +995,8 @@ def main():
     parser.add_argument("--orange-opencv-min-circularity", type=float, default=0.35, help="Minimum circularity for fallback orange")
     parser.add_argument("--orange-opencv-min-aspect", type=float, default=0.55, help="Minimum fallback orange bounding-box aspect ratio")
     parser.add_argument("--orange-opencv-max-aspect", type=float, default=1.35, help="Maximum fallback orange bounding-box aspect ratio")
+    parser.add_argument("--allow-border-orange-fallback", dest="orange_opencv_reject_border_touch", action="store_false", default=True, help="Allow OpenCV orange fallback candidates touching image borders")
+    parser.add_argument("--orange-opencv-border-margin", type=float, default=0.01, help="Border margin for rejecting orange fallback candidates")
     parser.add_argument("--no-bag", action="store_true", help="Disable OpenCV red/white bag detection")
     parser.add_argument("--bag-red-s-min", type=int, default=70, help="Minimum saturation for red bag")
     parser.add_argument("--bag-red-v-min", type=int, default=50, help="Minimum brightness for red bag")
@@ -929,6 +1026,7 @@ def main():
     parser.add_argument("--bag-bg-edge-min", type=float, default=0.012, help="Minimum edge density for foreground bag")
     parser.add_argument("--bag-bg-close-kernel", type=int, default=5, help="Morph close kernel size for foreground bag mask")
     parser.add_argument("--bag-white-low-contrast", action="store_true", default=True, help="Enable low-contrast white bag texture detection")
+    parser.add_argument("--bag-white-low-contrast-require-background", action="store_true", default=True, help="Require an empty-fridge background for low-contrast white bag detection")
     parser.add_argument("--bag-white-low-contrast-v-min", type=int, default=180, help="Minimum brightness for low-contrast white bag support")
     parser.add_argument("--bag-white-low-contrast-s-max", type=int, default=90, help="Maximum saturation for low-contrast white bag support")
     parser.add_argument("--bag-white-low-contrast-texture-threshold", type=int, default=16, help="Local contrast threshold for low-contrast white bags")
@@ -948,6 +1046,16 @@ def main():
     parser.add_argument("--bag-white-low-contrast-mean-s-max", type=float, default=55.0, help="Maximum mean saturation for low-contrast white bags")
     parser.add_argument("--bag-white-low-contrast-stddev-min", type=float, default=18.0, help="Minimum gray stddev for low-contrast white bags")
     parser.add_argument("--bag-white-low-contrast-score-bias", type=float, default=0.25, help="Score calibration bias for low-contrast white bags")
+    parser.add_argument("--bag-printed-white", action="store_true", default=True, help="Detect white bags from cyan/green printing")
+    parser.add_argument("--bag-print-h-min", type=int, default=75)
+    parser.add_argument("--bag-print-h-max", type=int, default=135)
+    parser.add_argument("--bag-print-s-min", type=int, default=60)
+    parser.add_argument("--bag-print-top-ratio", type=float, default=0.05)
+    parser.add_argument("--bag-print-bottom-ratio", type=float, default=0.60)
+    parser.add_argument("--bag-print-side-margin-ratio", type=float, default=0.08)
+    parser.add_argument("--bag-print-min-area", type=float, default=500.0)
+    parser.add_argument("--bag-print-expand-x", type=int, default=70)
+    parser.add_argument("--bag-print-expand-y", type=int, default=60)
     parser.add_argument("--bag-fruit-overlap-max", type=float, default=0.35, help="Reject bag candidates mostly covered by fruit detections")
     args = parser.parse_args()
 

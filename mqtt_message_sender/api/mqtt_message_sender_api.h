@@ -7,6 +7,11 @@
 #include "stm32_message_recever_api.h"
 
 // ==================== 结构体 ====================
+enum class MqttEventType : uint8_t {
+    Snapshot = 0,
+    Startup = 1
+};
+
 struct MqttFruitItem {
     uint16_t id;
     FruitType type;
@@ -18,6 +23,7 @@ struct MqttFruitItem {
 };
 
 struct MqttMessageStruct {
+    MqttEventType eventType = MqttEventType::Snapshot;
     uint32_t time;
     uint32_t messageId;
     uint32_t deviceId;
@@ -28,6 +34,7 @@ struct MqttMessageStruct {
 
 // ==================== API函数 ====================
 bool SendMqttMessage(const MqttMessageStruct& message);
+bool IsMqttMessageSenderReady();
 void MqttMessageSenderMainLoop();
 
 #endif // MQTT_MESSAGE_SENDER_API_H

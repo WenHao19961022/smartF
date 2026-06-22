@@ -87,6 +87,13 @@ public class MqttMessageHandler {
                 );
             }
 
+            // 启动事件只刷新设备在线/重启时间，不应生成一批空库存快照。
+            if ("startup".equalsIgnoreCase(data.getEventType())) {
+                log.info("收到设备启动通知: deviceId={}, msgId={}, startupTime={}",
+                        data.getDeviceId(), data.getMessageId(), data.getMessageTime());
+                return;
+            }
+
             // 5. 执行全量插入逻辑 (只增不减策略)
             // 逻辑由 InventoryService 内部处理：将 fruits 列表中的每项存为新记录
             inventoryService.saveInventorySnapshot(data);

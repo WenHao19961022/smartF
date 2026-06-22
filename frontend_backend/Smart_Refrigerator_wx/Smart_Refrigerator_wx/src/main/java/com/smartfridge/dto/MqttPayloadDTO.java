@@ -11,6 +11,10 @@ import java.util.List;
 @Data
 public class MqttPayloadDTO {
 
+    /** 消息类型：startup 表示设备刚启动，snapshot 表示库存快照。 */
+    @JsonProperty("event_type")
+    private String eventType;
+
     /** 设备唯一序列号 (对应 JSON 的 device_id) */
     @JsonProperty("device_id")
     private String deviceId;

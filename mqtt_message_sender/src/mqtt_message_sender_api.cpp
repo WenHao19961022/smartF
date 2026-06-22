@@ -10,6 +10,7 @@ bool SendMqttMessage(const MqttMessageStruct& message) {
     }
 
     LOG_PRINT("[Mqtt]", "SendMqttMessage: entering (msgId=" << message.messageId
+              << " eventType=" << (message.eventType == MqttEventType::Startup ? "startup" : "snapshot")
               << " fruitCount=" << (int)message.fruitCount << ")");
 
     uint8_t retryCount = 0;
@@ -32,6 +33,10 @@ bool SendMqttMessage(const MqttMessageStruct& message) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     return false;
+}
+
+bool IsMqttMessageSenderReady() {
+    return MessageSenderManager::GetInstance().IsReady();
 }
 
 void MqttMessageSenderMainLoop() {

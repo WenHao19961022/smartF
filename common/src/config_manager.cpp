@@ -21,6 +21,8 @@ ConfigManager::ConfigManager() {
     mConfig["mqtt.topic"] = "smartfridge/data";
     mConfig["mqtt.qos"] = "1";
     mConfig["mqtt.keepalive"] = "60";
+    mConfig["mqtt.startup_notify_enable"] = "1";
+    mConfig["mqtt.startup_notify_retry_sec"] = "2";
 
     // 串口配置
     mConfig["serial.port"] = "/dev/ttyTHS0";
@@ -44,14 +46,26 @@ ConfigManager::ConfigManager() {
     mConfig["cv.location_y_max"] = "1.0";
     mConfig["cv.location_flip_x"] = "0";
     mConfig["cv.location_flip_y"] = "0";
+    mConfig["cv.location_perspective_enable"] = "0";
+    mConfig["cv.location_tl_x"] = "0.0";
+    mConfig["cv.location_tl_y"] = "0.0";
+    mConfig["cv.location_tr_x"] = "1.0";
+    mConfig["cv.location_tr_y"] = "0.0";
+    mConfig["cv.location_br_x"] = "1.0";
+    mConfig["cv.location_br_y"] = "1.0";
+    mConfig["cv.location_bl_x"] = "0.0";
+    mConfig["cv.location_bl_y"] = "1.0";
     mConfig["cv.rotten_spot_enable"] = "1";
     mConfig["cv.rotten_dark_ratio_threshold"] = "0.15";
     mConfig["cv.rotten_dark_ratio_threshold_orange"] = "0.18";
-    mConfig["cv.rotten_dark_ratio_threshold_banana"] = "0.15";
+    mConfig["cv.rotten_dark_ratio_threshold_banana"] = "0.30";
     mConfig["cv.rotten_dark_v_threshold"] = "80";
     mConfig["cv.rotten_dark_s_threshold"] = "30";
     mConfig["cv.rotten_dark_v_threshold_orange"] = "130";
     mConfig["cv.rotten_dark_s_threshold_orange"] = "30";
+    mConfig["cv.rotten_orange_bottom_start_ratio"] = "0.55";
+    mConfig["cv.rotten_orange_bottom_dark_ratio_min"] = "0.10";
+    mConfig["cv.rotten_orange_bottom_contrast_min"] = "0.07";
     mConfig["cv.orange_color_reclass_enable"] = "1";
     mConfig["cv.orange_reclass_score_min"] = "0.03";
     mConfig["cv.orange_reclass_ratio_min"] = "0.45";
@@ -67,6 +81,8 @@ ConfigManager::ConfigManager() {
     mConfig["cv.orange_opencv_min_circularity"] = "0.35";
     mConfig["cv.orange_opencv_min_aspect"] = "0.55";
     mConfig["cv.orange_opencv_max_aspect"] = "1.35";
+    mConfig["cv.orange_opencv_reject_border_touch"] = "1";
+    mConfig["cv.orange_opencv_border_margin_ratio"] = "0.01";
     mConfig["cv.bag_detect_enable"] = "1";
     mConfig["cv.bag_background_path"] = "";
     mConfig["cv.bag_red_s_min"] = "70";
@@ -117,6 +133,16 @@ ConfigManager::ConfigManager() {
     mConfig["cv.bag_white_low_contrast_mean_s_max"] = "55";
     mConfig["cv.bag_white_low_contrast_stddev_min"] = "18";
     mConfig["cv.bag_white_low_contrast_score_bias"] = "0.25";
+    mConfig["cv.bag_printed_white_enable"] = "1";
+    mConfig["cv.bag_print_h_min"] = "75";
+    mConfig["cv.bag_print_h_max"] = "135";
+    mConfig["cv.bag_print_s_min"] = "60";
+    mConfig["cv.bag_print_top_ratio"] = "0.05";
+    mConfig["cv.bag_print_bottom_ratio"] = "0.60";
+    mConfig["cv.bag_print_side_margin_ratio"] = "0.08";
+    mConfig["cv.bag_print_min_area"] = "500";
+    mConfig["cv.bag_print_expand_x"] = "70";
+    mConfig["cv.bag_print_expand_y"] = "60";
     mConfig["cv.bag_fruit_overlap_max"] = "0.35";
     mConfig["cv.bag_merge_iou_threshold"] = "0.25";
     mConfig["cv.bag_merge_smaller_overlap"] = "0.55";

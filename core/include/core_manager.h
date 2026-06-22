@@ -24,6 +24,7 @@ private:
     void HandleDoorClose();
     void CheckTimers();
     void ProcessStaticResultOnly();
+    void TrySendStartupNotification();
 
     // V5.0: 滑动窗口稳态拼贴算法
     int32_t CalculateLocalDeltaW(uint32_t startTsMs, uint32_t endTsMs);
@@ -33,12 +34,14 @@ private:
     bool mRunning = true;
     bool mLastDoorState = false;
     bool mIsStaticWaiting = false;
+    bool mStartupNotificationQueued = false;
     uint16_t mBaseWeight = 0;
     uint32_t mDoorOpenTimestamp = 0; 
     uint32_t mDeviceId = 10001;
     std::chrono::seconds mStaticInterval{60};  
 
     std::chrono::steady_clock::time_point mLastStaticTime;
+    std::chrono::steady_clock::time_point mNextStartupNotifyAttempt;
 
     std::vector<WeightDataPoint> mWeightStream; 
     InventoryManager mInventoryManager;

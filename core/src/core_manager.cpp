@@ -1,5 +1,6 @@
 #include "../include/core_manager.h"
 #include "../include/core_log.h"
+#include "../../common/include/config_manager.h"
 #include <algorithm>
 #include <atomic>
 #include <thread>
@@ -164,6 +165,10 @@ static bool StopDynamicRecognitionWithTimeout(std::chrono::milliseconds timeout 
 }
 
 void CoreManager::Init() {
+    mDeviceId = static_cast<uint32_t>(ConfigManager::GetInstance().GetInt("device.id", 10001));
+    mStaticInterval = std::chrono::seconds(
+        ConfigManager::GetInstance().GetInt("inventory.static_interval_sec", 60));
+    mNextStartupNotifyAttempt = std::chrono::steady_clock::now();
     LOG_INFO("CoreManager 初始化成功");
 }
 
@@ -181,6 +186,10 @@ void CoreManager::Run() {
 
     while (mRunning) {
         loopCount++;
+
+        if (!mStartupNotificationQueued) {
+            TrySendStartupNotification();
+        }
 
         // 实时获取底层硬件状态（以最新的一次为准）
         FrigeratorHistoryInfo currInfo = GetFrigeratorInfo();
@@ -229,6 +238,47 @@ void CoreManager::Run() {
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
+void CoreManager::TrySendStartupNotification() {
+    if (!ConfigManager::GetInstance().GetBool("mqtt.startup_notify_enable", true)) {
+        mStartupNotificationQueued = true;
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (now < mNextStartupNotifyAttempt) {
+        return;
+    }
+    int retrySec = std::max(1, ConfigManager::GetInstance().GetInt("mqtt.startup_notify_retry_sec", 2));
+    mNextStartupNotifyAttempt = now + std::chrono::seconds(retrySec);
+
+    if (!IsMqttMessageSenderReady()) {
+        LOG_INFO("MQTT 尚未就绪，稍后重试设备启动通知");
+        return;
+    }
+
+    MqttMessageStruct message{};
+    message.eventType = MqttEventType::Startup;
+    message.time = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count());
+    uint16_t seq = gMsgCounter.fetch_add(1);
+    message.messageId = ((message.time & 0xFFFFu) << 16) | seq;
+    message.deviceId = mDeviceId;
+
+    FrigeratorHistoryInfo state = GetFrigeratorInfo();
+    message.fridgeInfo.temperature = state.temperature[kFridgeHistoryInfoSize - 1];
+    message.fridgeInfo.humidity = state.humidity[kFridgeHistoryInfoSize - 1];
+    message.fridgeInfo.weight = state.weight[kFridgeHistoryInfoSize - 1];
+    message.fridgeInfo.doorStatus = state.doorStatus[kFridgeHistoryInfoSize - 1];
+    message.fruitCount = 0;
+
+    if (SendMqttMessage(message)) {
+        mStartupNotificationQueued = true;
+        LOG_OK("设备启动通知已进入 MQTT 发送队列 | msgId=" << message.messageId);
+    } else {
+        LOG_WARN("设备启动通知排队失败，将自动重试");
     }
 }
 

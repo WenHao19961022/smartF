@@ -156,7 +156,31 @@ static CalibratedLocation ToCalibratedLocation(float modelX, float modelY, float
     float x = modelX / modelSize;
     float y = modelY / modelSize;
     auto& config = ConfigManager::GetInstance();
-    if (config.GetBool("cv.location_calibration_enable", false)) {
+    bool perspectiveEnabled = config.GetBool("cv.location_perspective_enable", false);
+    if (perspectiveEnabled) {
+        std::vector<cv::Point2f> source = {
+            {config.GetFloat("cv.location_tl_x", 0.0f) * modelSize,
+             config.GetFloat("cv.location_tl_y", 0.0f) * modelSize},
+            {config.GetFloat("cv.location_tr_x", 1.0f) * modelSize,
+             config.GetFloat("cv.location_tr_y", 0.0f) * modelSize},
+            {config.GetFloat("cv.location_br_x", 1.0f) * modelSize,
+             config.GetFloat("cv.location_br_y", 1.0f) * modelSize},
+            {config.GetFloat("cv.location_bl_x", 0.0f) * modelSize,
+             config.GetFloat("cv.location_bl_y", 1.0f) * modelSize}
+        };
+        const std::vector<cv::Point2f> destination = {
+            {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}
+        };
+        cv::Mat transform = cv::getPerspectiveTransform(source, destination);
+        std::vector<cv::Point2f> input = {{modelX, modelY}};
+        std::vector<cv::Point2f> output;
+        cv::perspectiveTransform(input, output, transform);
+        if (!output.empty() && std::isfinite(output[0].x) && std::isfinite(output[0].y)) {
+            x = output[0].x;
+            y = output[0].y;
+        }
+    }
+    if (!perspectiveEnabled && config.GetBool("cv.location_calibration_enable", false)) {
         float xMin = config.GetFloat("cv.location_x_min", 0.0f);
         float xMax = config.GetFloat("cv.location_x_max", 1.0f);
         float yMin = config.GetFloat("cv.location_y_min", 0.0f);
@@ -182,6 +206,47 @@ static CalibratedLocation ToCalibratedLocation(float modelX, float modelY, float
         return static_cast<uint8_t>(std::round(value * 255.0f));
     };
     return {toByte(x), toByte(y)};
+}
+
+static bool EstimateOrangeBottomRot(
+    const cv::Mat& modelFrame,
+    const YoloDetection& det,
+    float& topDarkRatio,
+    float& bottomDarkRatio)
+{
+    topDarkRatio = 0.0f;
+    bottomDarkRatio = 0.0f;
+    cv::Rect roi = DetectionRect(det, modelFrame.size());
+    if (roi.width < 12 || roi.height < 20) {
+        return false;
+    }
+
+    cv::Mat hsv;
+    cv::cvtColor(modelFrame(roi), hsv, cv::COLOR_BGR2HSV);
+    int darkV = ConfigManager::GetInstance().GetInt("cv.rotten_dark_v_threshold_orange", 130);
+    int darkS = ConfigManager::GetInstance().GetInt("cv.rotten_dark_s_threshold_orange", 30);
+    cv::Mat darkMask;
+    cv::inRange(hsv, cv::Scalar(0, darkS, 0), cv::Scalar(180, 255, darkV), darkMask);
+    cv::Mat fruitMask;
+    cv::inRange(hsv, cv::Scalar(0, 35, 40), cv::Scalar(180, 255, 255), fruitMask);
+    cv::bitwise_or(fruitMask, darkMask, fruitMask);
+
+    float bottomStartRatio = ConfigManager::GetInstance().GetFloat(
+        "cv.rotten_orange_bottom_start_ratio", 0.55f);
+    int split = std::max(1, std::min(hsv.rows - 1,
+        static_cast<int>(std::round(hsv.rows * bottomStartRatio))));
+    cv::Rect topRect(0, 0, hsv.cols, split);
+    cv::Rect bottomRect(0, split, hsv.cols, hsv.rows - split);
+    int topFruitPixels = cv::countNonZero(fruitMask(topRect));
+    int bottomFruitPixels = cv::countNonZero(fruitMask(bottomRect));
+    if (topFruitPixels <= 0 || bottomFruitPixels <= 0) {
+        return false;
+    }
+    topDarkRatio = static_cast<float>(cv::countNonZero(darkMask(topRect))) / topFruitPixels;
+    bottomDarkRatio = static_cast<float>(cv::countNonZero(darkMask(bottomRect))) / bottomFruitPixels;
+    float bottomMin = ConfigManager::GetInstance().GetFloat("cv.rotten_orange_bottom_dark_ratio_min", 0.10f);
+    float contrastMin = ConfigManager::GetInstance().GetFloat("cv.rotten_orange_bottom_contrast_min", 0.07f);
+    return bottomDarkRatio >= bottomMin && bottomDarkRatio - topDarkRatio >= contrastMin;
 }
 
 static bool AcceptBagContour(
@@ -707,6 +772,66 @@ static void AddLowContrastWhiteBagCandidates(
     }
 }
 
+static void AddPrintedWhiteBagCandidates(
+    const cv::Mat& hsv,
+    const std::vector<cv::Rect>& fruitRects,
+    std::vector<BagCandidate>& candidates)
+{
+    if (!ConfigManager::GetInstance().GetBool("cv.bag_printed_white_enable", true)) {
+        return;
+    }
+
+    int hueMin = ConfigManager::GetInstance().GetInt("cv.bag_print_h_min", 75);
+    int hueMax = ConfigManager::GetInstance().GetInt("cv.bag_print_h_max", 135);
+    int saturationMin = ConfigManager::GetInstance().GetInt("cv.bag_print_s_min", 60);
+    cv::Mat printMask;
+    cv::inRange(hsv, cv::Scalar(hueMin, saturationMin, 40),
+                cv::Scalar(hueMax, 255, 255), printMask);
+
+    int top = static_cast<int>(printMask.rows *
+        ConfigManager::GetInstance().GetFloat("cv.bag_print_top_ratio", 0.05f));
+    int bottom = static_cast<int>(printMask.rows *
+        ConfigManager::GetInstance().GetFloat("cv.bag_print_bottom_ratio", 0.60f));
+    int side = static_cast<int>(printMask.cols *
+        ConfigManager::GetInstance().GetFloat("cv.bag_print_side_margin_ratio", 0.08f));
+    if (top > 0) printMask(cv::Rect(0, 0, printMask.cols, top)).setTo(0);
+    if (bottom < printMask.rows) {
+        printMask(cv::Rect(0, bottom, printMask.cols, printMask.rows - bottom)).setTo(0);
+    }
+    if (side > 0 && side * 2 < printMask.cols) {
+        printMask(cv::Rect(0, 0, side, printMask.rows)).setTo(0);
+        printMask(cv::Rect(printMask.cols - side, 0, side, printMask.rows)).setTo(0);
+    }
+
+    cv::morphologyEx(printMask, printMask, cv::MORPH_OPEN,
+                     cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3)));
+    cv::dilate(printMask, printMask,
+               cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(9, 9)));
+    cv::morphologyEx(printMask, printMask, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_RECT, cv::Size(31, 31)));
+
+    int minPrintArea = ConfigManager::GetInstance().GetInt("cv.bag_print_min_area", 500);
+    int expandX = ConfigManager::GetInstance().GetInt("cv.bag_print_expand_x", 70);
+    int expandY = ConfigManager::GetInstance().GetInt("cv.bag_print_expand_y", 60);
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(printMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    for (const auto& contour : contours) {
+        double area = cv::contourArea(contour);
+        if (area < minPrintArea) {
+            continue;
+        }
+        cv::Rect printRect = cv::boundingRect(contour);
+        cv::Rect bagRect = ClampRect(cv::Rect(printRect.x - expandX, printRect.y - expandY,
+                                              printRect.width + expandX * 2,
+                                              printRect.height + expandY * 2), hsv.size());
+        if (bagRect.area() <= 0 || OverlapsKnownFruit(bagRect, fruitRects)) {
+            continue;
+        }
+        float score = std::min(0.99f, 0.5f + static_cast<float>(area) / 10000.0f);
+        AddBagCandidate(candidates, {bagRect, score, "white_printed"});
+    }
+}
+
 static std::vector<FruitInfo> DetectOrangesOpenCV(
     const cv::Mat& frame,
     std::vector<cv::Rect>& fruitRects)
@@ -735,6 +860,7 @@ static std::vector<FruitInfo> DetectOrangesOpenCV(
     float minCircularity = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_min_circularity", 0.35f);
     float minAspect = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_min_aspect", 0.55f);
     float maxAspect = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_max_aspect", 1.35f);
+    float borderMargin = ConfigManager::GetInstance().GetFloat("cv.orange_opencv_border_margin_ratio", 0.01f);
     int minFruitBoxSide = ConfigManager::GetInstance().GetInt("cv.min_fruit_box_side", 36);
 
     std::vector<std::vector<cv::Point>> contours;
@@ -750,6 +876,10 @@ static std::vector<FruitInfo> DetectOrangesOpenCV(
 
         cv::Rect rect = cv::boundingRect(contour);
         if (rect.width < minFruitBoxSide || rect.height < minFruitBoxSide) {
+            continue;
+        }
+        if (ConfigManager::GetInstance().GetBool("cv.orange_opencv_reject_border_touch", true)
+            && TouchesImageBorder(rect, orangeMask.size(), borderMargin)) {
             continue;
         }
 
@@ -786,13 +916,19 @@ static std::vector<FruitInfo> DetectOrangesOpenCV(
 
         float darkRatio = EstimateDarkSpotRatio(modelFrame, pseudoDet, FruitType::Orange);
         float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.18f);
+        float topDarkRatio = 0.0f;
+        float bottomDarkRatio = 0.0f;
+        bool bottomRot = EstimateOrangeBottomRot(
+            modelFrame, pseudoDet, topDarkRatio, bottomDarkRatio);
 
         FruitInfo info;
         info.fruitType = FruitType::Orange;
         CalibratedLocation location = ToCalibratedLocation(pseudoDet.cx, pseudoDet.cy);
         info.locationX = location.x;
         info.locationY = location.y;
-        info.freshness = darkRatio >= rottenThreshold ? FreshnessLevel::Rotten : FreshnessLevel::Fresh;
+        info.freshness = (darkRatio >= rottenThreshold || bottomRot)
+            ? FreshnessLevel::Rotten
+            : FreshnessLevel::Fresh;
 
         results.push_back(info);
         fruitRects.push_back(rect);
@@ -800,6 +936,9 @@ static std::vector<FruitInfo> DetectOrangesOpenCV(
                   << " coverage=" << orangeCoverage
                   << " circularity=" << circularity
                   << " darkRatio=" << darkRatio
+                  << " topDarkRatio=" << topDarkRatio
+                  << " bottomDarkRatio=" << bottomDarkRatio
+                  << " bottomRot=" << bottomRot
                   << " freshness=" << (int)info.freshness
                   << " rect=(" << rect.x << "," << rect.y << ","
                   << rect.width << "," << rect.height << ")");
@@ -879,6 +1018,7 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
 
     AddForegroundBagCandidates(modelFrame, redMask, whiteMask, edges, hsv, fruitRects, candidates);
     AddLowContrastWhiteBagCandidates(modelFrame, whiteMask, edges, hsv, fruitRects, candidates);
+    AddPrintedWhiteBagCandidates(hsv, fruitRects, candidates);
 
     contours.clear();
     cv::findContours(whiteMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -1262,17 +1402,25 @@ static std::vector<FruitInfo> PostProcessYOLO(
         if (ConfigManager::GetInstance().GetBool("cv.rotten_spot_enable", true)
             && info.fruitType != FruitType::PlasticBag) {
             float darkRatio = EstimateDarkSpotRatio(modelFrame, det, info.fruitType);
+            float topDarkRatio = 0.0f;
+            float bottomDarkRatio = 0.0f;
+            bool orangeBottomRot = false;
             float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.15f);
             if (info.fruitType == FruitType::Orange) {
                 rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.18f);
+                orangeBottomRot = EstimateOrangeBottomRot(
+                    modelFrame, det, topDarkRatio, bottomDarkRatio);
             } else if (info.fruitType == FruitType::Banana) {
                 rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_banana", rottenThreshold);
             }
-            if (darkRatio >= rottenThreshold) {
+            if (darkRatio >= rottenThreshold || orangeBottomRot) {
                 info.freshness = FreshnessLevel::Rotten;
             }
             LOG_PRINT("[CvModel]", "  SpotCheck " << label_name
                       << " darkRatio=" << darkRatio
+                      << " topDarkRatio=" << topDarkRatio
+                      << " bottomDarkRatio=" << bottomDarkRatio
+                      << " bottomRot=" << orangeBottomRot
                       << " threshold=" << rottenThreshold
                       << " freshness=" << (int)info.freshness);
         }
