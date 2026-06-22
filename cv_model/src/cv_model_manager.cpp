@@ -45,6 +45,11 @@ struct BagCandidate {
     const char* color;
 };
 
+struct CalibratedLocation {
+    uint8_t x;
+    uint8_t y;
+};
+
 static cv::Rect DetectionRect(const YoloDetection& det, const cv::Size& bounds) {
     int x1 = std::max(0, static_cast<int>(std::round(det.cx - det.w * 0.5f)));
     int y1 = std::max(0, static_cast<int>(std::round(det.cy - det.h * 0.5f)));
@@ -140,13 +145,40 @@ static float RectIoU(const cv::Rect& a, const cv::Rect& b) {
     return unionArea > 0 ? static_cast<float>(interArea) / static_cast<float>(unionArea) : 0.0f;
 }
 
-static uint8_t ToLocationByte(float modelCoord, float modelSize = 640.0f) {
-    if (!std::isfinite(modelCoord) || modelSize <= 0.0f) {
-        return 0;
+static CalibratedLocation ToCalibratedLocation(float modelX, float modelY, float modelSize = 640.0f) {
+    if (!std::isfinite(modelX) || !std::isfinite(modelY) || modelSize <= 0.0f) {
+        return {0, 0};
     }
-    float clamped = std::max(0.0f, std::min(modelSize, modelCoord));
-    int scaled = static_cast<int>(std::round(clamped * 255.0f / modelSize));
-    return static_cast<uint8_t>(std::max(0, std::min(255, scaled)));
+
+    float x = modelX / modelSize;
+    float y = modelY / modelSize;
+    auto& config = ConfigManager::GetInstance();
+    if (config.GetBool("cv.location_calibration_enable", false)) {
+        float xMin = config.GetFloat("cv.location_x_min", 0.0f);
+        float xMax = config.GetFloat("cv.location_x_max", 1.0f);
+        float yMin = config.GetFloat("cv.location_y_min", 0.0f);
+        float yMax = config.GetFloat("cv.location_y_max", 1.0f);
+
+        // Invalid field measurements must not collapse every object onto an edge.
+        if (xMax - xMin >= 0.01f) {
+            x = (x - xMin) / (xMax - xMin);
+        }
+        if (yMax - yMin >= 0.01f) {
+            y = (y - yMin) / (yMax - yMin);
+        }
+        if (config.GetBool("cv.location_flip_x", false)) {
+            x = 1.0f - x;
+        }
+        if (config.GetBool("cv.location_flip_y", false)) {
+            y = 1.0f - y;
+        }
+    }
+
+    auto toByte = [](float value) -> uint8_t {
+        value = std::max(0.0f, std::min(1.0f, value));
+        return static_cast<uint8_t>(std::round(value * 255.0f));
+    };
+    return {toByte(x), toByte(y)};
 }
 
 static bool AcceptBagContour(
@@ -182,23 +214,73 @@ static bool AcceptBagContour(
     return fillRatio >= 0.12f;
 }
 
+static bool ShouldMergeBagRects(const cv::Rect& a, const cv::Rect& b) {
+    if (a.area() <= 0 || b.area() <= 0) {
+        return false;
+    }
+
+    int interArea = (a & b).area();
+    int minArea = std::min(a.area(), b.area());
+    float smallerOverlap = static_cast<float>(interArea) / static_cast<float>(minArea);
+    float iou = RectIoU(a, b);
+    float iouThreshold = ConfigManager::GetInstance().GetFloat("cv.bag_merge_iou_threshold", 0.25f);
+    float overlapThreshold = ConfigManager::GetInstance().GetFloat("cv.bag_merge_smaller_overlap", 0.55f);
+    if (iou >= iouThreshold || smallerOverlap >= overlapThreshold) {
+        return true;
+    }
+
+    // Specular highlights can split one bag contour into two non-overlapping pieces.
+    // Only join close pieces whose projections still strongly align on one axis.
+    int gapX = std::max(0, std::max(a.x, b.x) - std::min(a.x + a.width, b.x + b.width));
+    int gapY = std::max(0, std::max(a.y, b.y) - std::min(a.y + a.height, b.y + b.height));
+    int overlapX = std::max(0, std::min(a.x + a.width, b.x + b.width) - std::max(a.x, b.x));
+    int overlapY = std::max(0, std::min(a.y + a.height, b.y + b.height) - std::max(a.y, b.y));
+    float xAlignment = static_cast<float>(overlapX) / static_cast<float>(std::min(a.width, b.width));
+    float yAlignment = static_cast<float>(overlapY) / static_cast<float>(std::min(a.height, b.height));
+    int maxGap = ConfigManager::GetInstance().GetInt("cv.bag_merge_max_gap_px", 20);
+    float minAlignment = ConfigManager::GetInstance().GetFloat("cv.bag_merge_min_axis_overlap", 0.45f);
+    bool verticallySplit = gapY <= maxGap && xAlignment >= minAlignment;
+    bool horizontallySplit = gapX <= maxGap && yAlignment >= minAlignment;
+    if (!verticallySplit && !horizontallySplit) {
+        return false;
+    }
+
+    cv::Rect united = a | b;
+    float maxUnionAreaRatio = ConfigManager::GetInstance().GetFloat("cv.bag_max_area_ratio", 0.45f);
+    return static_cast<float>(united.area()) / (640.0f * 640.0f) <= maxUnionAreaRatio;
+}
+
 static void AddBagCandidate(std::vector<BagCandidate>& bags, const BagCandidate& candidate) {
-    for (auto& bag : bags) {
-        int interArea = (bag.rect & candidate.rect).area();
-        int minArea = std::min(bag.rect.area(), candidate.rect.area());
+    BagCandidate merged = candidate;
+    for (size_t i = 0; i < bags.size();) {
+        auto& bag = bags[i];
+        if (ShouldMergeBagRects(bag.rect, merged.rect)) {
+            merged.rect = bag.rect | merged.rect;
+            if (bag.score > merged.score) {
+                merged.color = bag.color;
+            }
+            merged.score = std::max(bag.score, merged.score);
+            bags.erase(bags.begin() + static_cast<std::ptrdiff_t>(i));
+            i = 0; // The enlarged box may now connect another fragment.
+            continue;
+        }
+
+        int interArea = (bag.rect & merged.rect).area();
+        int minArea = std::min(bag.rect.area(), merged.rect.area());
         float smallerOverlap = minArea > 0 ? static_cast<float>(interArea) / static_cast<float>(minArea) : 0.0f;
-        float iou = RectIoU(bag.rect, candidate.rect);
+        float iou = RectIoU(bag.rect, merged.rect);
         if (iou > 0.35f || smallerOverlap > 0.65f) {
             bool preferCandidate = iou > 0.35f
-                ? candidate.score > bag.score
-                : candidate.rect.area() > bag.rect.area();
+                ? merged.score > bag.score
+                : merged.rect.area() > bag.rect.area();
             if (preferCandidate) {
-                bag = candidate;
+                bag = merged;
             }
             return;
         }
+        ++i;
     }
-    bags.push_back(candidate);
+    bags.push_back(merged);
 }
 
 static bool OverlapsKnownFruit(const cv::Rect& candidate, const std::vector<cv::Rect>& fruitRects) {
@@ -700,8 +782,9 @@ static std::vector<FruitInfo> DetectOrangesOpenCV(
 
         FruitInfo info;
         info.fruitType = FruitType::Orange;
-        info.locationX = ToLocationByte(pseudoDet.cx);
-        info.locationY = ToLocationByte(pseudoDet.cy);
+        CalibratedLocation location = ToCalibratedLocation(pseudoDet.cx, pseudoDet.cy);
+        info.locationX = location.x;
+        info.locationY = location.y;
         info.freshness = darkRatio >= rottenThreshold ? FreshnessLevel::Rotten : FreshnessLevel::Fresh;
 
         results.push_back(info);
@@ -833,8 +916,11 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
     for (const auto& candidate : candidates) {
         FruitInfo info;
         info.fruitType = FruitType::PlasticBag;
-        info.locationX = ToLocationByte(candidate.rect.x + candidate.rect.width * 0.5f);
-        info.locationY = ToLocationByte(candidate.rect.y + candidate.rect.height * 0.5f);
+        CalibratedLocation location = ToCalibratedLocation(
+            candidate.rect.x + candidate.rect.width * 0.5f,
+            candidate.rect.y + candidate.rect.height * 0.5f);
+        info.locationX = location.x;
+        info.locationY = location.y;
         info.freshness = FreshnessLevel::Fresh;
         results.push_back(info);
         LOG_PRINT("[CvModel]", "  BagDetect color=" << candidate.color
@@ -1092,6 +1178,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
         float rottenOrangeScore = det.classScores.size() > 5 ? det.classScores[5] : 0.0f;
         std::cout << "[" << det.classId << "] " << label_name
                   << " conf=" << det.confidence
+                  << " modelPos=(" << det.cx << "," << det.cy << ")"
                   << " apple_scores(fresh=" << freshAppleScore
                   << ", rotten=" << rottenAppleScore << ")"
                   << " orange_scores(fresh=" << freshOrangeScore
@@ -1105,8 +1192,9 @@ static std::vector<FruitInfo> PostProcessYOLO(
         ResolvedDetection resolved = resolveDetection(det);
         FruitInfo info;
         info.fruitType = resolved.fruitType;
-        info.locationX = ToLocationByte(det.cx);
-        info.locationY = ToLocationByte(det.cy);
+        CalibratedLocation location = ToCalibratedLocation(det.cx, det.cy);
+        info.locationX = location.x;
+        info.locationY = location.y;
         info.freshness = resolved.freshness;
         if (resolved.orangeReclass) {
             LOG_PRINT("[CvModel]", "  Reclass apple->orange"
@@ -1162,7 +1250,10 @@ static std::vector<FruitInfo> PostProcessYOLO(
                 continue;
             }
 
-            if (calcIoU(det, detections[j]) > nmsThreshold) {
+            bool duplicateBag = info.fruitType == FruitType::PlasticBag
+                && ShouldMergeBagRects(DetectionRect(det, cv::Size(640, 640)),
+                                       DetectionRect(detections[j], cv::Size(640, 640)));
+            if (duplicateBag || calcIoU(det, detections[j]) > nmsThreshold) {
                 suppressed[j] = true;
             }
         }
@@ -1180,7 +1271,8 @@ static std::vector<FruitInfo> PostProcessYOLO(
             }
             int dx = static_cast<int>(existing.locationX) - static_cast<int>(bag.locationX);
             int dy = static_cast<int>(existing.locationY) - static_cast<int>(bag.locationY);
-            if (std::sqrt(static_cast<float>(dx * dx + dy * dy)) < kDynamicPositionTolerance) {
+            int mergeDistance = ConfigManager::GetInstance().GetInt("cv.bag_cross_source_merge_distance", 30);
+            if (std::sqrt(static_cast<float>(dx * dx + dy * dy)) < mergeDistance) {
                 duplicate = true;
                 break;
             }
@@ -1292,7 +1384,7 @@ void CvModelManager::StaticRecognitionInternal() {
     for (const auto& cand : fruitCandidates) {
         int confirmThreshold = kStaticConfirmThreshold;
         if (cand.type == FruitType::PlasticBag) {
-            confirmThreshold = ConfigManager::GetInstance().GetInt("cv.static_bag_confirm_threshold", 1);
+            confirmThreshold = ConfigManager::GetInstance().GetInt("cv.static_bag_confirm_threshold", 2);
         }
         if (cand.count >= confirmThreshold) {
             FruitInfo info;
