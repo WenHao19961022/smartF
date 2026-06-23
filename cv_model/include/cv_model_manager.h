@@ -9,6 +9,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <opencv2/core.hpp>
 
 // ==================== 常量 ====================
 const bool kInitFinished = true;
@@ -78,6 +79,7 @@ private:
     void DynamicMonitoringStep();        // 监测步骤（每帧调用）
     void DynamicCheckChanges();          // 检测变化并记录事件
     int CountWindowAppearances(const TrackedFruitState& tracked) const;
+    void CaptureStartupBagBaseline();
 
     // 工具方法
     bool IsFruitSimilar(const FruitInfo& a, const FruitInfo& b) const;
@@ -111,6 +113,7 @@ private:
     // 静态识别（保留兼容）
     std::vector<std::vector<FruitInfo>> mSlidingWindowResults;
     std::mutex mSlidingWindowMutex;
+    cv::Mat mStartupBagBaseline;
 };
 
 // ==================== 全局API（兼容旧接口） ====================
