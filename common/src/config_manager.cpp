@@ -57,7 +57,7 @@ ConfigManager::ConfigManager() {
     mConfig["cv.location_bl_y"] = "1.0";
     mConfig["cv.rotten_spot_enable"] = "1";
     mConfig["cv.rotten_dark_ratio_threshold"] = "0.04";
-    mConfig["cv.rotten_dark_ratio_threshold_orange"] = "0.05";
+    mConfig["cv.rotten_dark_ratio_threshold_orange"] = "0.03";
     mConfig["cv.rotten_dark_ratio_threshold_banana"] = "0.05";
     mConfig["cv.rotten_dark_v_threshold"] = "80";
     mConfig["cv.rotten_dark_s_threshold"] = "30";
@@ -65,10 +65,9 @@ ConfigManager::ConfigManager() {
     mConfig["cv.rotten_dark_s_threshold_orange"] = "30";
     mConfig["cv.rotten_lesion_min_area_ratio"] = "0.004";
     mConfig["cv.rotten_lesion_max_aspect"] = "5.0";
-    mConfig["cv.rotten_black_relative_v"] = "0.48";
-    mConfig["cv.rotten_black_v_cap"] = "75";
-    mConfig["cv.rotten_local_blur_size"] = "21";
-    mConfig["cv.rotten_local_contrast_min"] = "28";
+    mConfig["cv.rotten_black_relative_v"] = "0.68";
+    mConfig["cv.rotten_black_v_cap"] = "150";
+    mConfig["cv.rotten_lesion_mean_contrast_min"] = "20";
     mConfig["cv.rotten_orange_bottom_start_ratio"] = "0.55";
     mConfig["cv.rotten_orange_bottom_dark_ratio_min"] = "0.10";
     mConfig["cv.rotten_orange_bottom_contrast_min"] = "0.07";
@@ -189,6 +188,7 @@ ConfigManager::ConfigManager() {
     mConfig["cv.bag_startup_max_area_ratio"] = "0.45";
     mConfig["cv.bag_startup_white_fill_min"] = "0.22";
     mConfig["cv.bag_startup_wrinkle_density_min"] = "0.025";
+    mConfig["cv.bag_weight_evidence_min_g"] = "5";
 
     // 摄像头配置
     mConfig["camera.index"] = "0";

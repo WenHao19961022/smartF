@@ -26,6 +26,7 @@ private:
     void ProcessStaticResultOnly();
     void TrySendStartupNotification();
     void SendRecognitionError(RecognitionStatus status);
+    bool FilterUnsupportedPlasticBags(StaticRecognitionResult& result, uint16_t currentWeight);
 
     // V5.0: 滑动窗口稳态拼贴算法
     int32_t CalculateLocalDeltaW(uint32_t startTsMs, uint32_t endTsMs);
@@ -37,6 +38,8 @@ private:
     bool mIsStaticWaiting = false;
     bool mStartupNotificationQueued = false;
     uint16_t mBaseWeight = 0;
+    uint16_t mStartupEmptyWeight = 0;
+    bool mStartupEmptyWeightCaptured = false;
     uint32_t mDoorOpenTimestamp = 0; 
     uint32_t mDeviceId = 10001;
     std::chrono::seconds mStaticInterval{60};  

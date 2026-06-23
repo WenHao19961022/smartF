@@ -90,20 +90,12 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
                          std::max(1, crop.rows * 38 / 100)),
                 0, 0, 360, cv::Scalar(255), cv::FILLED);
     float meanV = static_cast<float>(cv::mean(hsvChannels[2], fruitMask)[0]);
-    float relativeV = ConfigManager::GetInstance().GetFloat("cv.rotten_black_relative_v", 0.48f);
-    int absoluteCap = ConfigManager::GetInstance().GetInt("cv.rotten_black_v_cap", 75);
+    float relativeV = ConfigManager::GetInstance().GetFloat("cv.rotten_black_relative_v", 0.68f);
+    int absoluteCap = ConfigManager::GetInstance().GetInt("cv.rotten_black_v_cap", 150);
     int darkThreshold = std::max(12, std::min(absoluteCap,
         static_cast<int>(std::round(meanV * relativeV))));
-    int blurSize = ConfigManager::GetInstance().GetInt("cv.rotten_local_blur_size", 21);
-    if (blurSize % 2 == 0) ++blurSize;
-    cv::Mat localMean, absoluteDark, localContrast, darkMask;
-    cv::GaussianBlur(hsvChannels[2], localMean, cv::Size(blurSize, blurSize), 0);
-    cv::threshold(hsvChannels[2], absoluteDark, darkThreshold, 255, cv::THRESH_BINARY_INV);
-    cv::subtract(localMean, hsvChannels[2], localContrast);
-    cv::threshold(localContrast, localContrast,
-                  ConfigManager::GetInstance().GetInt("cv.rotten_local_contrast_min", 28),
-                  255, cv::THRESH_BINARY);
-    cv::bitwise_and(absoluteDark, localContrast, darkMask);
+    cv::Mat darkMask;
+    cv::threshold(hsvChannels[2], darkMask, darkThreshold, 255, cv::THRESH_BINARY_INV);
     cv::bitwise_and(darkMask, fruitMask, darkMask);
     cv::morphologyEx(darkMask, darkMask, cv::MORPH_OPEN,
                      cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3)));
@@ -118,6 +110,8 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
     cv::findContours(darkMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     float minLesionRatio = ConfigManager::GetInstance().GetFloat("cv.rotten_lesion_min_area_ratio", 0.004f);
     float maxLineAspect = ConfigManager::GetInstance().GetFloat("cv.rotten_lesion_max_aspect", 5.0f);
+    float lesionContrastMin = ConfigManager::GetInstance().GetFloat(
+        "cv.rotten_lesion_mean_contrast_min", 20.0f);
     for (const auto& contour : contours) {
         double area = cv::contourArea(contour);
         if (area < fruitPixels * minLesionRatio) continue;
@@ -125,6 +119,11 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
         float aspect = static_cast<float>(std::max(lesion.width, lesion.height))
             / std::max(1, std::min(lesion.width, lesion.height));
         if (aspect > maxLineAspect || std::min(lesion.width, lesion.height) < 4) continue;
+        cv::Mat lesionMask(crop.size(), CV_8UC1, cv::Scalar(0));
+        std::vector<std::vector<cv::Point>> singleContour{contour};
+        cv::drawContours(lesionMask, singleContour, 0, cv::Scalar(255), cv::FILLED);
+        float lesionMeanV = static_cast<float>(cv::mean(hsvChannels[2], lesionMask)[0]);
+        if (meanV - lesionMeanV < lesionContrastMin) continue;
         darkPixels += static_cast<int>(area);
     }
     return static_cast<float>(darkPixels) / static_cast<float>(fruitPixels);
@@ -938,7 +937,7 @@ static std::vector<FruitInfo> DetectOrangesOpenCV(
         pseudoDet.classId = 2;
 
         float darkRatio = EstimateDarkSpotRatio(modelFrame, pseudoDet);
-        float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.18f);
+        float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.03f);
         float topDarkRatio = 0.0f;
         float bottomDarkRatio = 0.0f;
         bool bottomRot = EstimateOrangeBottomRot(
@@ -1466,9 +1465,9 @@ static std::vector<FruitInfo> PostProcessYOLO(
         if (ConfigManager::GetInstance().GetBool("cv.rotten_spot_enable", true)
             && info.fruitType != FruitType::PlasticBag) {
             float darkRatio = EstimateDarkSpotRatio(modelFrame, det);
-            float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.15f);
+            float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.04f);
             if (info.fruitType == FruitType::Orange) {
-                rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.18f);
+                rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.03f);
             } else if (info.fruitType == FruitType::Banana) {
                 rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_banana", rottenThreshold);
             }

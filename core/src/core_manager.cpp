@@ -193,6 +193,12 @@ void CoreManager::Run() {
 
         // 实时获取底层硬件状态（以最新的一次为准）
         FrigeratorHistoryInfo currInfo = GetFrigeratorInfo();
+        if (!mStartupEmptyWeightCaptured
+            && currInfo.temperatureTimestamp[kFridgeHistoryInfoSize - 1] != 0) {
+            mStartupEmptyWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
+            mStartupEmptyWeightCaptured = true;
+            LOG_DATA("记录开机空箱重量零点: " << mStartupEmptyWeight << "g");
+        }
         bool currentDoorState = (currInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
 
         // [V5.0 逻辑] 门开期间：高频收集重量流
@@ -298,6 +304,38 @@ void CoreManager::SendRecognitionError(RecognitionStatus status) {
     message.fridgeInfo.doorStatus = state.doorStatus[kFridgeHistoryInfoSize - 1];
     message.fruitCount = 0;
     SendMqttMessage(message);
+}
+
+bool CoreManager::FilterUnsupportedPlasticBags(
+    StaticRecognitionResult& result, uint16_t currentWeight) {
+    bool hasModelFruit = false;
+    bool hasBag = false;
+    for (uint8_t i = 0; i < result.fruitCount; ++i) {
+        hasBag = hasBag || result.fruits[i].fruitType == FruitType::PlasticBag;
+        hasModelFruit = hasModelFruit || result.fruits[i].fruitType != FruitType::PlasticBag;
+    }
+    if (!hasBag) return true;
+
+    int minDelta = ConfigManager::GetInstance().GetInt("cv.bag_weight_evidence_min_g", 5);
+    int delta = static_cast<int>(currentWeight)
+        - static_cast<int>(mStartupEmptyWeightCaptured ? mStartupEmptyWeight : 0);
+    bool weightEvidence = mStartupEmptyWeightCaptured && delta >= minDelta;
+    bool supported = weightEvidence || hasModelFruit;
+    if (supported) {
+        LOG_DATA("保留塑料袋: weightDelta=" << delta << "g, modelFruit=" << hasModelFruit);
+        return true;
+    }
+
+    uint8_t writeIndex = 0;
+    for (uint8_t readIndex = 0; readIndex < result.fruitCount; ++readIndex) {
+        if (result.fruits[readIndex].fruitType != FruitType::PlasticBag) {
+            result.fruits[writeIndex++] = result.fruits[readIndex];
+        }
+    }
+    LOG_WARN("过滤无物理证据的塑料袋: weightDelta=" << delta
+             << "g, modelFruit=0, removed=" << (result.fruitCount - writeIndex));
+    result.fruitCount = writeIndex;
+    return false;
 }
 
 void CoreManager::HandleDoorOpen() {
@@ -409,6 +447,7 @@ void CoreManager::HandleDoorClose() {
     }
 
     uint16_t finalStableWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
+    bool bagSupported = FilterUnsupportedPlasticBags(stat, finalStableWeight);
     uint32_t closeTsMs = GetCurrentTimeMs();
     if (mWeightStream.empty() || mWeightStream.back().timestampMs != closeTsMs) {
         mWeightStream.push_back({closeTsMs, finalStableWeight});
@@ -443,6 +482,10 @@ void CoreManager::HandleDoorClose() {
             int32_t avgDeltaW = clusterDeltaW / static_cast<int32_t>(cluster.size());
 
             for (const auto& ev : cluster) {
+                if (ev.fruitType == FruitType::PlasticBag && !bagSupported) {
+                    LOG_WARN("忽略无重量/水果证据的动态塑料袋事件");
+                    continue;
+                }
                 draftWeightDelta[ev.fruitType] += avgDeltaW;
                 dynCountDelta[ev.fruitType] +=
                     (ev.action == FruitChangeAction::PUT_IN) ? 1 : -1;
@@ -548,6 +591,10 @@ void CoreManager::ProcessStaticResultOnly() {
         return;
     }
 
+    FrigeratorHistoryInfo currHistory = GetFrigeratorInfo();
+    uint16_t currWeight = currHistory.weight[kFridgeHistoryInfoSize - 1];
+    FilterUnsupportedPlasticBags(stat, currWeight);
+
     LOG_DATA("Static result: fruitCount=" << (int)stat.fruitCount << " | timestamp=" << stat.timestamp);
     for (uint8_t i = 0; i < stat.fruitCount; ++i) {
         LOG_DATA("  StatFruit[" << (int)i << "]: type=" << (int)stat.fruits[i].fruitType
@@ -557,9 +604,6 @@ void CoreManager::ProcessStaticResultOnly() {
 
     // 调用 InventoryManager 仅刷新属性（使用上一次开门时间戳作为批次UID）
     mInventoryManager.UpdateStaticProperties(stat);
-
-    FrigeratorHistoryInfo currHistory = GetFrigeratorInfo();
-    uint16_t currWeight = currHistory.weight[kFridgeHistoryInfoSize - 1];
 
     std::map<FruitType, int32_t> avgWeights;
     std::vector<TrackedFruit> flattened = mInventoryManager.GetFlattenedStock(avgWeights);

@@ -118,7 +118,11 @@ void InventoryManager::Reconcile(
     // 如果动态识别也确认了同类 TAKE_OUT，则认为视觉证据足够，避免称重采样未对齐导致手机端数量不减少。
     for (auto& [type, delta] : realCountDelta) {
         int32_t dynDelta = dynCountDelta.count(type) ? dynCountDelta.at(type) : 0;
-        if (delta < 0 && noRemovalWeightEvidence && dynDelta >= 0) {
+        // Plastic bags are already filtered by startup-weight/model evidence in
+        // CoreManager. Do not preserve an old false-positive bag merely because
+        // an empty fridge naturally has no negative weight delta.
+        if (type != FruitType::PlasticBag
+            && delta < 0 && noRemovalWeightEvidence && dynDelta >= 0) {
             LOG_WARN("遮挡保护: 静态识别显示 type=" << (int)type << " 少了 " << std::abs(delta)
                      << " 个，但重量变化仅 " << physicalDelta << "g，保留库存数量");
             delta = 0;
