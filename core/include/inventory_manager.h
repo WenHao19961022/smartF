@@ -15,6 +15,9 @@ struct TrackedFruit {
     uint8_t freshness;
     uint16_t locationX;
     uint16_t locationY;
+    bool occludedByBag = false;
+    uint8_t occludingBagX = 0;
+    uint8_t occludingBagY = 0;
 };
 
 struct CategoryStock {
@@ -44,6 +47,8 @@ public:
     uint16_t GetNextId() { return ++mNextFruitId; }
 
 private:
+    std::map<FruitType, int32_t> UpdateBagOcclusionState(
+        const StaticRecognitionResult& statRes);
     std::map<FruitType, CategoryStock> mStock;
     uint16_t mNextFruitId = 100;
 };

@@ -3,9 +3,18 @@
 #include "../../common/include/config_manager.h"
 #include <algorithm>
 #include <atomic>
+#include <array>
+#include <cmath>
 #include <thread>
 
 static std::atomic<uint16_t> gMsgCounter{0};
+
+static uint16_t MedianLatestWeight(const FrigeratorHistoryInfo& info) {
+    std::array<uint16_t, kFridgeHistoryInfoSize> values{};
+    for (size_t i = 0; i < kFridgeHistoryInfoSize; ++i) values[i] = info.weight[i];
+    std::sort(values.begin(), values.end());
+    return values[values.size() / 2];
+}
 
 // 带超时的等待函数，避免主线程无限死等
 static bool WaitForStaticBusyTimeout(std::chrono::milliseconds timeout) {
@@ -195,18 +204,21 @@ void CoreManager::Run() {
         FrigeratorHistoryInfo currInfo = GetFrigeratorInfo();
         if (!mStartupEmptyWeightCaptured
             && currInfo.temperatureTimestamp[kFridgeHistoryInfoSize - 1] != 0) {
-            mStartupEmptyWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
+            mStartupEmptyWeight = MedianLatestWeight(currInfo);
             mStartupEmptyWeightCaptured = true;
             LOG_DATA("记录开机空箱重量零点: " << mStartupEmptyWeight << "g");
         }
         bool currentDoorState = (currInfo.doorStatus[kFridgeHistoryInfoSize - 1] == DoorStatus::DoorOpen);
 
-        // [V5.0 逻辑] 门开期间：高频收集重量流
-        if (currentDoorState) {
-            uint32_t nowMs = GetCurrentTimeMs();
-            uint16_t currWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
-            if (mWeightStream.empty() || mWeightStream.back().weight != currWeight || (nowMs - mWeightStream.back().timestampMs > 50)) {
-                mWeightStream.push_back({nowMs, currWeight});
+        // Collect continuously: the load cell often settles only after the door
+        // signal has already changed to CLOSED.
+        uint32_t nowMs = GetCurrentTimeMs();
+        uint16_t sampledWeight = currInfo.weight[kFridgeHistoryInfoSize - 1];
+        if (mWeightStream.empty() || mWeightStream.back().weight != sampledWeight
+            || (nowMs - mWeightStream.back().timestampMs > 50)) {
+            mWeightStream.push_back({nowMs, sampledWeight});
+            if (mWeightStream.size() > 2000) {
+                mWeightStream.erase(mWeightStream.begin(), mWeightStream.begin() + 1000);
             }
         }
 
@@ -319,23 +331,83 @@ bool CoreManager::FilterUnsupportedPlasticBags(
     int minDelta = ConfigManager::GetInstance().GetInt("cv.bag_weight_evidence_min_g", 5);
     int delta = static_cast<int>(currentWeight)
         - static_cast<int>(mStartupEmptyWeightCaptured ? mStartupEmptyWeight : 0);
-    bool weightEvidence = mStartupEmptyWeightCaptured && delta >= minDelta;
-    bool supported = weightEvidence || hasModelFruit;
+    int maxDoorExcursion = 0;
+    int totalRise = 0;
+    int totalFall = 0;
+    int previousWeight = mWeightStream.empty() ? mBaseWeight : mWeightStream.front().weight;
+    for (const auto& point : mWeightStream) {
+        maxDoorExcursion = std::max(maxDoorExcursion,
+            std::abs(static_cast<int>(point.weight) - static_cast<int>(mBaseWeight)));
+        int step = static_cast<int>(point.weight) - previousWeight;
+        if (step > 0) totalRise += step;
+        else totalFall += -step;
+        previousWeight = point.weight;
+    }
+    int movementNetTolerance = ConfigManager::GetInstance().GetInt(
+        "cv.weight_move_net_tolerance_g", 5);
+    float movementSymmetryMin = ConfigManager::GetInstance().GetFloat(
+        "cv.weight_move_symmetry_min", 0.75f);
+    float symmetry = static_cast<float>(std::min(totalRise, totalFall))
+        / std::max(1, std::max(totalRise, totalFall));
+    bool balancedMovement = totalRise >= minDelta && totalFall >= minDelta
+        && symmetry >= movementSymmetryMin
+        && std::abs(static_cast<int>(currentWeight) - static_cast<int>(mBaseWeight))
+            <= movementNetTolerance;
+    std::map<FruitType, int32_t> learnedAvgWeights;
+    auto currentStock = mInventoryManager.GetFlattenedStock(learnedAvgWeights);
+    int existingBagCount = static_cast<int>(std::count_if(
+        currentStock.begin(), currentStock.end(),
+        [](const TrackedFruit& item) { return item.type == FruitType::PlasticBag; }));
+    std::vector<int32_t> ordinaryWeights;
+    for (const auto& [type, average] : learnedAvgWeights) {
+        if (type != FruitType::PlasticBag && average > 5) ordinaryWeights.push_back(average);
+    }
+    int ordinaryReference = 0;
+    if (!ordinaryWeights.empty()) {
+        std::sort(ordinaryWeights.begin(), ordinaryWeights.end());
+        ordinaryReference = ordinaryWeights[ordinaryWeights.size() / 2];
+    }
+    int eventMagnitude = std::max(
+        std::abs(static_cast<int>(currentWeight) - static_cast<int>(mBaseWeight)),
+        maxDoorExcursion);
+    float bagWeightRatio = ConfigManager::GetInstance().GetFloat(
+        "cv.bag_weight_vs_fruit_ratio", 1.05f);
+    bool heavierThanOrdinaryFruit = ordinaryReference <= 0
+        || eventMagnitude >= static_cast<int>(std::ceil(ordinaryReference * bagWeightRatio));
+    bool weightEvidence = mStartupEmptyWeightCaptured
+        && (delta >= minDelta || maxDoorExcursion >= minDelta)
+        && !balancedMovement && heavierThanOrdinaryFruit;
+    bool supported = weightEvidence;
     if (supported) {
-        LOG_DATA("保留塑料袋: weightDelta=" << delta << "g, modelFruit=" << hasModelFruit);
+        LOG_DATA("保留塑料袋: weightDelta=" << delta << "g, maxDoorExcursion="
+                 << maxDoorExcursion << "g, symmetry=" << symmetry
+                 << ", balancedMove=" << balancedMovement
+                 << ", eventMagnitude=" << eventMagnitude
+                 << "g, ordinaryFruit=" << ordinaryReference << "g"
+                 << ", modelFruit=" << hasModelFruit);
         return true;
     }
 
     uint8_t writeIndex = 0;
+    int keptExistingBags = 0;
     for (uint8_t readIndex = 0; readIndex < result.fruitCount; ++readIndex) {
-        if (result.fruits[readIndex].fruitType != FruitType::PlasticBag) {
+        if (result.fruits[readIndex].fruitType != FruitType::PlasticBag
+            || keptExistingBags < existingBagCount) {
+            if (result.fruits[readIndex].fruitType == FruitType::PlasticBag) {
+                ++keptExistingBags;
+            }
             result.fruits[writeIndex++] = result.fruits[readIndex];
         }
     }
     LOG_WARN("过滤无物理证据的塑料袋: weightDelta=" << delta
-             << "g, modelFruit=0, removed=" << (result.fruitCount - writeIndex));
+             << "g, maxDoorExcursion=" << maxDoorExcursion
+             << "g, symmetry=" << symmetry << ", balancedMove=" << balancedMovement
+             << ", eventMagnitude=" << eventMagnitude
+             << "g, ordinaryFruit=" << ordinaryReference << "g"
+             << ", existingBags=" << existingBagCount
+             << ", removed=" << (result.fruitCount - writeIndex));
     result.fruitCount = writeIndex;
-    return false;
+    return existingBagCount > 0;
 }
 
 void CoreManager::HandleDoorOpen() {
@@ -364,7 +436,7 @@ void CoreManager::HandleDoorOpen() {
     
     // 清空旧流，压入绝对物理基座
     mWeightStream.clear();
-    mBaseWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
+    mBaseWeight = MedianLatestWeight(GetFrigeratorInfo());
     mWeightStream.push_back({GetCurrentTimeMs(), mBaseWeight});
     
     LOG_DATA(std::string("开门瞬间抓取基座: ") + std::to_string(mBaseWeight) + "g");
@@ -446,7 +518,13 @@ void CoreManager::HandleDoorClose() {
         return;
     }
 
-    uint16_t finalStableWeight = GetFrigeratorInfo().weight[kFridgeHistoryInfoSize - 1];
+    FrigeratorHistoryInfo closeHistory = GetFrigeratorInfo();
+    uint16_t finalStableWeight = MedianLatestWeight(closeHistory);
+    uint32_t historyNowMs = GetCurrentTimeMs();
+    for (size_t i = 0; i < kFridgeHistoryInfoSize; ++i) {
+        mWeightStream.push_back({historyNowMs - static_cast<uint32_t>(
+            (kFridgeHistoryInfoSize - 1 - i) * 125), closeHistory.weight[i]});
+    }
     bool bagSupported = FilterUnsupportedPlasticBags(stat, finalStableWeight);
     uint32_t closeTsMs = GetCurrentTimeMs();
     if (mWeightStream.empty() || mWeightStream.back().timestampMs != closeTsMs) {
@@ -592,13 +670,15 @@ void CoreManager::ProcessStaticResultOnly() {
     }
 
     FrigeratorHistoryInfo currHistory = GetFrigeratorInfo();
-    uint16_t currWeight = currHistory.weight[kFridgeHistoryInfoSize - 1];
+    uint16_t currWeight = MedianLatestWeight(currHistory);
     FilterUnsupportedPlasticBags(stat, currWeight);
 
     LOG_DATA("Static result: fruitCount=" << (int)stat.fruitCount << " | timestamp=" << stat.timestamp);
     for (uint8_t i = 0; i < stat.fruitCount; ++i) {
         LOG_DATA("  StatFruit[" << (int)i << "]: type=" << (int)stat.fruits[i].fruitType
                  << " | pos=(" << (int)stat.fruits[i].locationX << "," << (int)stat.fruits[i].locationY << ")"
+                 << " | box=(" << (int)stat.fruits[i].boxX << "," << (int)stat.fruits[i].boxY
+                 << "," << (int)stat.fruits[i].boxWidth << "," << (int)stat.fruits[i].boxHeight << ")"
                  << " | freshness=" << (int)stat.fruits[i].freshness);
     }
 

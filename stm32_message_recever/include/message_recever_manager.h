@@ -55,7 +55,7 @@ private:
     int mSerialFd = -1;
 
     // 变化阈值（从配置管理器读取）
-    uint16_t mWeightChangeThreshold = 100;
+    uint16_t mWeightChangeThreshold = 3;
     uint16_t mTemperatureChangeThreshold = 1;
     uint16_t mHumidityChangeThreshold = 5;
 

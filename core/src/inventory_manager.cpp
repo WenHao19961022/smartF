@@ -1,5 +1,6 @@
 #include "../include/inventory_manager.h"
 #include "../include/core_log.h"
+#include "../../common/include/config_manager.h"
 #include <cmath>
 #include <limits>
 #include <numeric>
@@ -30,7 +31,11 @@ void ApplyStaticPropertiesToCategory(
 
     auto applyDetection = [&](size_t fruitIndex, size_t detectionSlot) {
         const auto& det = statRes.fruits[detectionIndices[detectionSlot]];
-        category.fruits[fruitIndex].freshness = static_cast<uint8_t>(det.freshness);
+        // Freshness is monotonic in inventory: a rotten fruit cannot become
+        // fresh again merely because its damaged side rotated away from camera.
+        category.fruits[fruitIndex].freshness = std::max(
+            category.fruits[fruitIndex].freshness,
+            static_cast<uint8_t>(det.freshness));
         category.fruits[fruitIndex].locationX = det.locationX;
         category.fruits[fruitIndex].locationY = det.locationY;
         detectionUsed[detectionSlot] = true;
@@ -41,6 +46,9 @@ void ApplyStaticPropertiesToCategory(
     // keep their own freshness/position instead of being paired by vector order.
     for (size_t fruitIndex = 0; fruitIndex < category.fruits.size(); ++fruitIndex) {
         const auto& fruit = category.fruits[fruitIndex];
+        if (fruit.occludedByBag) {
+            continue;
+        }
         bool hasKnownLocation = fruit.locationX != 0 || fruit.locationY != 0;
         if (!hasKnownLocation) {
             continue;
@@ -84,6 +92,81 @@ void ApplyStaticPropertiesToCategory(
 
 }
 
+std::map<FruitType, int32_t> InventoryManager::UpdateBagOcclusionState(
+    const StaticRecognitionResult& statRes) {
+    std::vector<const FruitInfo*> bags;
+    std::map<FruitType, std::vector<const FruitInfo*>> visibleByType;
+    for (uint8_t i = 0; i < statRes.fruitCount; ++i) {
+        const auto& detection = statRes.fruits[i];
+        if (detection.fruitType == FruitType::PlasticBag) bags.push_back(&detection);
+        else visibleByType[detection.fruitType].push_back(&detection);
+    }
+
+    int padding = ConfigManager::GetInstance().GetInt("cv.bag_occlusion_padding", 8);
+    int visibleTolerance = ConfigManager::GetInstance().GetInt(
+        "cv.bag_occlusion_visible_tolerance", 24);
+    std::map<FruitType, int32_t> occludedCounts;
+    for (auto& [type, category] : mStock) {
+        if (type == FruitType::PlasticBag) continue;
+        std::vector<bool> detectionUsed(visibleByType[type].size(), false);
+
+        for (auto& fruit : category.fruits) {
+            const FruitInfo* coveringBag = nullptr;
+            for (const auto* bag : bags) {
+                int left = std::max(0, static_cast<int>(bag->boxX) - padding);
+                int top = std::max(0, static_cast<int>(bag->boxY) - padding);
+                int right = std::min(255, static_cast<int>(bag->boxX)
+                    + bag->boxWidth + padding);
+                int bottom = std::min(255, static_cast<int>(bag->boxY)
+                    + bag->boxHeight + padding);
+                if (bag->boxWidth > 0 && bag->boxHeight > 0
+                    && fruit.locationX >= left && fruit.locationX <= right
+                    && fruit.locationY >= top && fruit.locationY <= bottom) {
+                    coveringBag = bag;
+                    break;
+                }
+            }
+            if (coveringBag != nullptr) {
+                fruit.occludedByBag = true;
+                fruit.occludingBagX = coveringBag->locationX;
+                fruit.occludingBagY = coveringBag->locationY;
+                occludedCounts[type]++;
+                LOG_INFO("袋子遮挡保护: fruitId=" << fruit.id
+                         << " type=" << static_cast<int>(type)
+                         << " fruitPos=(" << fruit.locationX << "," << fruit.locationY << ")"
+                         << " bagPos=(" << static_cast<int>(coveringBag->locationX) << ","
+                         << static_cast<int>(coveringBag->locationY) << ")");
+                continue;
+            }
+
+            int bestSlot = -1;
+            float bestDistance = std::numeric_limits<float>::max();
+            for (size_t slot = 0; slot < visibleByType[type].size(); ++slot) {
+                if (detectionUsed[slot]) continue;
+                const auto* detection = visibleByType[type][slot];
+                float dx = static_cast<float>(fruit.locationX) - detection->locationX;
+                float dy = static_cast<float>(fruit.locationY) - detection->locationY;
+                float distance = std::sqrt(dx * dx + dy * dy);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestSlot = static_cast<int>(slot);
+                }
+            }
+            if (bestSlot >= 0 && bestDistance <= visibleTolerance) {
+                detectionUsed[bestSlot] = true;
+                fruit.occludedByBag = false;
+                fruit.occludingBagX = 0;
+                fruit.occludingBagY = 0;
+                continue;
+            }
+            fruit.occludedByBag = false;
+            fruit.occludingBagX = 0;
+            fruit.occludingBagY = 0;
+        }
+    }
+    return occludedCounts;
+}
+
 void InventoryManager::Reconcile(
     const std::map<FruitType, int32_t>& draftWeightDelta, 
     const std::map<FruitType, int32_t>& dynCountDelta, 
@@ -98,6 +181,10 @@ void InventoryManager::Reconcile(
     std::map<FruitType, int32_t> staticCounts;
     for (uint8_t i = 0; i < statRes.fruitCount; ++i) {
         staticCounts[statRes.fruits[i].fruitType]++;
+    }
+    auto occludedCounts = UpdateBagOcclusionState(statRes);
+    for (const auto& [type, count] : occludedCounts) {
+        staticCounts[type] += count;
     }
 
     std::map<FruitType, int32_t> realCountDelta;
@@ -118,11 +205,7 @@ void InventoryManager::Reconcile(
     // 如果动态识别也确认了同类 TAKE_OUT，则认为视觉证据足够，避免称重采样未对齐导致手机端数量不减少。
     for (auto& [type, delta] : realCountDelta) {
         int32_t dynDelta = dynCountDelta.count(type) ? dynCountDelta.at(type) : 0;
-        // Plastic bags are already filtered by startup-weight/model evidence in
-        // CoreManager. Do not preserve an old false-positive bag merely because
-        // an empty fridge naturally has no negative weight delta.
-        if (type != FruitType::PlasticBag
-            && delta < 0 && noRemovalWeightEvidence && dynDelta >= 0) {
+        if (delta < 0 && noRemovalWeightEvidence && dynDelta >= 0) {
             LOG_WARN("遮挡保护: 静态识别显示 type=" << (int)type << " 少了 " << std::abs(delta)
                      << " 个，但重量变化仅 " << physicalDelta << "g，保留库存数量");
             delta = 0;
@@ -298,6 +381,7 @@ void InventoryManager::Reconcile(
 // [新增] 定时刷新属性的具体实现
 void InventoryManager::UpdateStaticProperties(const StaticRecognitionResult& statRes) {
     LOG_INFO("执行定时刷新：对齐最新新鲜度与坐标");
+    UpdateBagOcclusionState(statRes);
     
     // 遍历现有账本，仅将最新的新鲜度和坐标覆盖上去
     for (auto& [type, category] : mStock) {

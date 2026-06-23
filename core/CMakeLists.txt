@@ -21,3 +21,20 @@ target_link_libraries(smart_fridge_app
         3rd_opencv                  # 提供 OpenCV 的符号实现
         Threads::Threads
 )
+
+if(BUILD_TESTING)
+    add_executable(inventory_occlusion_test
+        tests/inventory_occlusion_test.cpp
+        src/inventory_manager.cpp
+        src/core_log.cpp
+    )
+    target_include_directories(inventory_occlusion_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/common/include
+        ${CMAKE_SOURCE_DIR}/cv_model/api
+        ${CMAKE_SOURCE_DIR}/stm32_message_recever/api
+        ${CMAKE_SOURCE_DIR}/mqtt_message_sender/api
+    )
+    target_link_libraries(inventory_occlusion_test PRIVATE common_lib)
+    add_test(NAME inventory_occlusion COMMAND inventory_occlusion_test)
+endif()

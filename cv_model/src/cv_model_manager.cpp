@@ -11,6 +11,7 @@
 #include <tuple>
 #include <algorithm>
 #include <numeric>
+#include <array>
 
 static uint32_t NowEpochMs32() {
     return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -228,6 +229,27 @@ static CalibratedLocation ToCalibratedLocation(float modelX, float modelY, float
         return static_cast<uint8_t>(std::round(value * 255.0f));
     };
     return {toByte(x), toByte(y)};
+}
+
+static void SetCalibratedBox(FruitInfo& info, const cv::Rect& rect) {
+    if (rect.area() <= 0) return;
+    std::array<CalibratedLocation, 4> corners = {
+        ToCalibratedLocation(static_cast<float>(rect.x), static_cast<float>(rect.y)),
+        ToCalibratedLocation(static_cast<float>(rect.x + rect.width), static_cast<float>(rect.y)),
+        ToCalibratedLocation(static_cast<float>(rect.x + rect.width), static_cast<float>(rect.y + rect.height)),
+        ToCalibratedLocation(static_cast<float>(rect.x), static_cast<float>(rect.y + rect.height))
+    };
+    uint8_t minX = 255, minY = 255, maxX = 0, maxY = 0;
+    for (const auto& corner : corners) {
+        minX = std::min(minX, corner.x);
+        minY = std::min(minY, corner.y);
+        maxX = std::max(maxX, corner.x);
+        maxY = std::max(maxY, corner.y);
+    }
+    info.boxX = minX;
+    info.boxY = minY;
+    info.boxWidth = static_cast<uint8_t>(maxX - minX);
+    info.boxHeight = static_cast<uint8_t>(maxY - minY);
 }
 
 static bool EstimateOrangeBottomRot(
@@ -1103,7 +1125,8 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
 }
 
 static std::vector<BagCandidate> DetectWhiteBagsFromStartupBaseline(
-    const cv::Mat& frame, const cv::Mat& startupBaseline) {
+    const cv::Mat& frame, const cv::Mat& startupBaseline,
+    const std::vector<cv::Rect>& fruitRects) {
     std::vector<BagCandidate> bags;
     if (frame.empty() || startupBaseline.empty()) return bags;
 
@@ -1130,6 +1153,29 @@ static std::vector<BagCandidate> DetectWhiteBagsFromStartupBaseline(
     if (closeSize % 2 == 0) ++closeSize;
     cv::morphologyEx(foreground, foreground, cv::MORPH_CLOSE,
                      cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(closeSize, closeSize)));
+
+    // Bag evidence is valid only on the calibrated usable board. Most false
+    // candidates in the field log touched x=0 and belonged to the side wall.
+    std::vector<cv::Point> boardPolygon = {
+        {static_cast<int>(config.GetFloat("cv.location_tl_x", 0.0f) * 640),
+         static_cast<int>(config.GetFloat("cv.location_tl_y", 0.0f) * 640)},
+        {static_cast<int>(config.GetFloat("cv.location_tr_x", 1.0f) * 640),
+         static_cast<int>(config.GetFloat("cv.location_tr_y", 0.0f) * 640)},
+        {static_cast<int>(config.GetFloat("cv.location_br_x", 1.0f) * 640),
+         static_cast<int>(config.GetFloat("cv.location_br_y", 1.0f) * 640)},
+        {static_cast<int>(config.GetFloat("cv.location_bl_x", 0.0f) * 640),
+         static_cast<int>(config.GetFloat("cv.location_bl_y", 1.0f) * 640)}
+    };
+    cv::Mat boardMask(foreground.size(), CV_8UC1, cv::Scalar(0));
+    cv::fillConvexPoly(boardMask, boardPolygon, cv::Scalar(255));
+    cv::bitwise_and(foreground, boardMask, foreground);
+
+    // A fruit is already fully explained by YOLO and must not create an extra
+    // white-bag component through highlights or a bright label.
+    for (const auto& rawFruitRect : fruitRects) {
+        cv::Rect fruitRect = rawFruitRect & cv::Rect(0, 0, 640, 640);
+        if (fruitRect.area() > 0) foreground(fruitRect).setTo(0);
+    }
     cv::Canny(gray, edges, 45, 120);
 
     std::vector<std::vector<cv::Point>> contours;
@@ -1455,6 +1501,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
             }
         }
         cv::Rect acceptedRect = DetectionRect(det, cv::Size(640, 640));
+        SetCalibratedBox(info, acceptedRect);
         if (info.fruitType != FruitType::PlasticBag) {
             cv::Rect fruitRect = acceptedRect;
             if (fruitRect.area() > 0) {
@@ -1465,7 +1512,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
         if (ConfigManager::GetInstance().GetBool("cv.rotten_spot_enable", true)
             && info.fruitType != FruitType::PlasticBag) {
             float darkRatio = EstimateDarkSpotRatio(modelFrame, det);
-            float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.04f);
+            float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.035f);
             if (info.fruitType == FruitType::Orange) {
                 rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.03f);
             } else if (info.fruitType == FruitType::Banana) {
@@ -1500,12 +1547,19 @@ static std::vector<FruitInfo> PostProcessYOLO(
 
     std::vector<cv::Rect> resultRects = acceptedFruitRects;
     if (bagBaseline != nullptr && !bagBaseline->empty()) {
-        auto bagCandidates = DetectWhiteBagsFromStartupBaseline(frame, *bagBaseline);
+        auto bagCandidates = DetectWhiteBagsFromStartupBaseline(
+            frame, *bagBaseline, acceptedFruitRects);
         for (const auto& candidate : bagCandidates) {
             CalibratedLocation location = ToCalibratedLocation(
                 candidate.rect.x + candidate.rect.width * 0.5f,
                 candidate.rect.y + candidate.rect.height * 0.5f);
-            results.push_back({FruitType::PlasticBag, location.x, location.y, FreshnessLevel::Fresh});
+            FruitInfo bagInfo{};
+            bagInfo.fruitType = FruitType::PlasticBag;
+            bagInfo.locationX = location.x;
+            bagInfo.locationY = location.y;
+            bagInfo.freshness = FreshnessLevel::Fresh;
+            SetCalibratedBox(bagInfo, candidate.rect);
+            results.push_back(bagInfo);
             resultRects.push_back(candidate.rect);
         }
     }
@@ -1660,6 +1714,12 @@ void CvModelManager::StaticRecognitionInternal() {
             }
             info.locationX = static_cast<uint8_t>(std::min(255, static_cast<int>(cand.sumX / cand.count)));
             info.locationY = static_cast<uint8_t>(std::min(255, static_cast<int>(cand.sumY / cand.count)));
+            cv::Rect averageRect(
+                static_cast<int>(cand.sumRectX / cand.count),
+                static_cast<int>(cand.sumRectY / cand.count),
+                static_cast<int>(cand.sumRectW / cand.count),
+                static_cast<int>(cand.sumRectH / cand.count));
+            SetCalibratedBox(info, averageRect);
             LOG_PRINT("[CvModel]", "  StaticCandidate final type=" << (int)info.fruitType
                       << " count=" << cand.count
                       << " votes(fresh=" << cand.freshVotes
@@ -1723,8 +1783,11 @@ void CvModelManager::DynamicRecognitionLoop() {
             continue;
         }
 
+        // Plastic bags are inventory objects, not transient door-motion events.
+        // Detect them only in the closed-door static pass; otherwise hands,
+        // moving fruit and exposure changes repeatedly create fake bag events.
         auto detections = PostProcessYOLO(frame, rawOutput, mInferenceEngine->GetOutputDims(),
-                                          -1.0f, -1.0f, &mStartupBagBaseline);
+                                          -1.0f, -1.0f, nullptr);
 
         {
             std::lock_guard<std::mutex> lock(mDynamicMutex);

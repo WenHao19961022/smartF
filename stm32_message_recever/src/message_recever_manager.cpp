@@ -107,7 +107,7 @@ void MessageReceverManager::Init() {
     mSerialPort = ConfigManager::GetInstance().GetString("serial.port", "/dev/ttyTHS0");
     mBaudrate = ConfigManager::GetInstance().GetInt("serial.baudrate", 115200);
     mWeightChangeThreshold = static_cast<uint16_t>(
-        ConfigManager::GetInstance().GetInt("serial.weight_threshold", 100));
+        ConfigManager::GetInstance().GetInt("serial.weight_threshold", 3));
     mTemperatureChangeThreshold = static_cast<uint16_t>(
         ConfigManager::GetInstance().GetInt("serial.temperature_threshold", 1));
     mHumidityChangeThreshold = static_cast<uint16_t>(
@@ -356,7 +356,9 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
         mHistoryInfo.temperature[kFridgeHistoryInfoSize - 1] = newInfo.info.temperature;
     }
 
-    // 重量变化超过阈值时记录
+    // Weight is a continuous signal. The old implementation updated the latest
+    // value only when a single sample changed by more than 100g, so legitimate
+    // 8g/44g/20g movements were parsed and then silently discarded.
     int weightDiff = std::abs(static_cast<int>(mHistoryInfo.weight[kFridgeHistoryInfoSize - 1])
                  - static_cast<int>(newInfo.info.weight));
     if (weightDiff > mWeightChangeThreshold) {
@@ -364,13 +366,13 @@ void MessageReceverManager::UpdateFrigeratorHistoryInfo(FrigeratorInfoWithTimest
                   << mHistoryInfo.weight[kFridgeHistoryInfoSize - 1] << "g -> "
                   << newInfo.info.weight << "g"
                   << " (diff=" << weightDiff << " > threshold=" << mWeightChangeThreshold << "g)");
-        for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
-            mHistoryInfo.weightTimestamp[i] = mHistoryInfo.weightTimestamp[i + 1];
-            mHistoryInfo.weight[i] = mHistoryInfo.weight[i + 1];
-        }
-        mHistoryInfo.weightTimestamp[kFridgeHistoryInfoSize - 1] = newInfo.timestamp;
-        mHistoryInfo.weight[kFridgeHistoryInfoSize - 1] = newInfo.info.weight;
     }
+    for (size_t i = 0; i < kFridgeHistoryInfoSize - 1; i++) {
+        mHistoryInfo.weightTimestamp[i] = mHistoryInfo.weightTimestamp[i + 1];
+        mHistoryInfo.weight[i] = mHistoryInfo.weight[i + 1];
+    }
+    mHistoryInfo.weightTimestamp[kFridgeHistoryInfoSize - 1] = newInfo.timestamp;
+    mHistoryInfo.weight[kFridgeHistoryInfoSize - 1] = newInfo.info.weight;
 }
 
 // ==================== Mock Mode ====================

@@ -44,6 +44,12 @@ struct FruitInfo {
     uint8_t locationX;
     uint8_t locationY;
     FreshnessLevel freshness;
+    // Calibrated 0..255 box used internally for bag/fruit occlusion matching.
+    // MQTT remains center-coordinate based, so this does not change its schema.
+    uint8_t boxX = 0;
+    uint8_t boxY = 0;
+    uint8_t boxWidth = 0;
+    uint8_t boxHeight = 0;
 };
 
 struct FruitInfoWithWeight {
