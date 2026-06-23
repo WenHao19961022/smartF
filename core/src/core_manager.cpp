@@ -5,6 +5,8 @@
 #include <atomic>
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 
 static std::atomic<uint16_t> gMsgCounter{0};
@@ -529,6 +531,27 @@ void CoreManager::HandleDoorClose() {
     uint32_t closeTsMs = GetCurrentTimeMs();
     if (mWeightStream.empty() || mWeightStream.back().timestampMs != closeTsMs) {
         mWeightStream.push_back({closeTsMs, finalStableWeight});
+    }
+    if (ConfigManager::GetInstance().GetBool("cv.diagnostic_capture_enable", true)) {
+        std::string runDir = ConfigManager::GetInstance().GetString(
+            "cv.diagnostic_capture_root", "logs/recognition_debug")
+            + "/run_" + std::to_string(stat.timestamp);
+        std::error_code error;
+        std::filesystem::create_directories(runDir, error);
+        if (!error) {
+            std::ofstream weightCsv(runDir + "/weight.csv", std::ios::trunc);
+            weightCsv << "timestamp_ms,weight_g\n";
+            for (const auto& point : mWeightStream) {
+                weightCsv << point.timestampMs << ',' << point.weight << '\n';
+            }
+            std::ofstream weightSummary(runDir + "/weight_summary.txt", std::ios::trunc);
+            weightSummary << "startup_empty_weight_g=" << mStartupEmptyWeight << '\n'
+                          << "door_open_base_weight_g=" << mBaseWeight << '\n'
+                          << "door_close_stable_weight_g=" << finalStableWeight << '\n';
+            LOG_DATA("DiagnosticWeight run_id=" << stat.timestamp
+                     << " samples=" << mWeightStream.size()
+                     << " file=" << runDir << "/weight.csv");
+        }
     }
 
     std::map<FruitType, int32_t> draftWeightDelta;

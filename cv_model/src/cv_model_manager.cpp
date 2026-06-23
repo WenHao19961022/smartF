@@ -12,6 +12,10 @@
 #include <algorithm>
 #include <numeric>
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 static uint32_t NowEpochMs32() {
     return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -54,6 +58,17 @@ struct CalibratedLocation {
     uint8_t y;
 };
 
+struct DarkSpotDebug {
+    cv::Mat crop;
+    cv::Mat fruitMask;
+    cv::Mat thresholdMask;
+    cv::Mat darkMask;
+    float meanV = 0.0f;
+    int darkThreshold = 0;
+    int fruitPixels = 0;
+    int darkPixels = 0;
+};
+
 static cv::Rect DetectionRect(const YoloDetection& det, const cv::Size& bounds) {
     int x1 = std::max(0, static_cast<int>(std::round(det.cx - det.w * 0.5f)));
     int y1 = std::max(0, static_cast<int>(std::round(det.cy - det.h * 0.5f)));
@@ -65,7 +80,9 @@ static cv::Rect DetectionRect(const YoloDetection& det, const cv::Size& bounds) 
     return cv::Rect(x1, y1, x2 - x1, y2 - y1);
 }
 
-static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetection& det) {
+static float EstimateDarkSpotRatio(
+    const cv::Mat& modelFrame, const YoloDetection& det,
+    DarkSpotDebug* debug = nullptr) {
     if (modelFrame.empty()) {
         return 0.0f;
     }
@@ -100,6 +117,7 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
     cv::bitwise_and(darkMask, fruitMask, darkMask);
     cv::morphologyEx(darkMask, darkMask, cv::MORPH_OPEN,
                      cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3)));
+    cv::Mat thresholdMask = darkMask.clone();
 
     int fruitPixels = cv::countNonZero(fruitMask);
     if (fruitPixels <= 0) {
@@ -107,6 +125,7 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
     }
 
     int darkPixels = 0;
+    cv::Mat acceptedDarkMask(crop.size(), CV_8UC1, cv::Scalar(0));
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(darkMask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     float minLesionRatio = ConfigManager::GetInstance().GetFloat("cv.rotten_lesion_min_area_ratio", 0.004f);
@@ -126,6 +145,17 @@ static float EstimateDarkSpotRatio(const cv::Mat& modelFrame, const YoloDetectio
         float lesionMeanV = static_cast<float>(cv::mean(hsvChannels[2], lesionMask)[0]);
         if (meanV - lesionMeanV < lesionContrastMin) continue;
         darkPixels += static_cast<int>(area);
+        cv::drawContours(acceptedDarkMask, singleContour, 0, cv::Scalar(255), cv::FILLED);
+    }
+    if (debug != nullptr) {
+        debug->crop = crop.clone();
+        debug->fruitMask = fruitMask.clone();
+        debug->thresholdMask = thresholdMask;
+        debug->darkMask = acceptedDarkMask;
+        debug->meanV = meanV;
+        debug->darkThreshold = darkThreshold;
+        debug->fruitPixels = fruitPixels;
+        debug->darkPixels = darkPixels;
     }
     return static_cast<float>(darkPixels) / static_cast<float>(fruitPixels);
 }
@@ -702,6 +732,7 @@ static void AddLowContrastWhiteBagCandidates(
     const std::vector<cv::Rect>& fruitRects,
     std::vector<BagCandidate>& candidates)
 {
+    (void)whiteMask;
     if (!ConfigManager::GetInstance().GetBool("cv.bag_white_low_contrast_enable", true)) {
         return;
     }
@@ -1126,7 +1157,8 @@ static std::vector<FruitInfo> DetectPlasticBagsOpenCV(
 
 static std::vector<BagCandidate> DetectWhiteBagsFromStartupBaseline(
     const cv::Mat& frame, const cv::Mat& startupBaseline,
-    const std::vector<cv::Rect>& fruitRects) {
+    const std::vector<cv::Rect>& fruitRects,
+    const std::string& diagnosticPrefix = "") {
     std::vector<BagCandidate> bags;
     if (frame.empty() || startupBaseline.empty()) return bags;
 
@@ -1177,6 +1209,13 @@ static std::vector<BagCandidate> DetectWhiteBagsFromStartupBaseline(
         if (fruitRect.area() > 0) foreground(fruitRect).setTo(0);
     }
     cv::Canny(gray, edges, 45, 120);
+    if (!diagnosticPrefix.empty()) {
+        cv::imwrite(diagnosticPrefix + "_bag_difference.png", difference);
+        cv::imwrite(diagnosticPrefix + "_bag_white_mask.png", whiteMask);
+        cv::imwrite(diagnosticPrefix + "_bag_board_mask.png", boardMask);
+        cv::imwrite(diagnosticPrefix + "_bag_foreground.png", foreground);
+        cv::imwrite(diagnosticPrefix + "_bag_edges.png", edges);
+    }
 
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(foreground, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -1330,7 +1369,8 @@ static std::vector<FruitInfo> PostProcessYOLO(
     float confThreshold = -1.0f,
     float nmsThreshold = -1.0f,
     const cv::Mat* bagBaseline = nullptr,
-    std::vector<cv::Rect>* outputRects = nullptr)
+    std::vector<cv::Rect>* outputRects = nullptr,
+    const std::string& diagnosticPrefix = "")
 {
     std::vector<FruitInfo> results;
 
@@ -1375,6 +1415,17 @@ static std::vector<FruitInfo> PostProcessYOLO(
     if (!frame.empty()) {
         cv::resize(frame, modelFrame, cv::Size(640, 640));
     }
+    cv::Mat annotatedFrame = modelFrame.clone();
+    std::ofstream diagnosticCsv;
+    if (!diagnosticPrefix.empty()) {
+        diagnosticCsv.open(diagnosticPrefix + "_detections.csv", std::ios::trunc);
+        diagnosticCsv << "object_index,model_class,model_label,confidence,cx,cy,width,height,"
+                         "score_fresh_apple,score_fresh_banana,score_fresh_orange,"
+                         "score_rotten_apple,score_rotten_banana,score_rotten_orange,"
+                         "result_type,freshness,dark_ratio,mean_v,dark_threshold,"
+                         "fruit_pixels,dark_pixels,box_x,box_y,box_width,box_height\n";
+    }
+    int diagnosticObjectIndex = 0;
 
     auto resolveDetection = [&](const YoloDetection& det) -> ResolvedDetection {
         ResolvedDetection resolved{};
@@ -1509,9 +1560,12 @@ static std::vector<FruitInfo> PostProcessYOLO(
             }
         }
 
+        float darkRatio = -1.0f;
+        DarkSpotDebug spotDebug;
         if (ConfigManager::GetInstance().GetBool("cv.rotten_spot_enable", true)
             && info.fruitType != FruitType::PlasticBag) {
-            float darkRatio = EstimateDarkSpotRatio(modelFrame, det);
+            darkRatio = EstimateDarkSpotRatio(modelFrame, det,
+                diagnosticPrefix.empty() ? nullptr : &spotDebug);
             float rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold", 0.035f);
             if (info.fruitType == FruitType::Orange) {
                 rottenThreshold = ConfigManager::GetInstance().GetFloat("cv.rotten_dark_ratio_threshold_orange", 0.03f);
@@ -1528,6 +1582,41 @@ static std::vector<FruitInfo> PostProcessYOLO(
         }
 
         results.push_back(info);
+        if (!diagnosticPrefix.empty()) {
+            std::ostringstream objectPrefix;
+            objectPrefix << diagnosticPrefix << "_object_"
+                         << std::setw(2) << std::setfill('0') << diagnosticObjectIndex;
+            if (!spotDebug.crop.empty()) cv::imwrite(objectPrefix.str() + "_crop.jpg", spotDebug.crop);
+            if (!spotDebug.fruitMask.empty()) cv::imwrite(objectPrefix.str() + "_fruit_mask.png", spotDebug.fruitMask);
+            if (!spotDebug.thresholdMask.empty()) cv::imwrite(objectPrefix.str() + "_dark_threshold_mask.png", spotDebug.thresholdMask);
+            if (!spotDebug.darkMask.empty()) cv::imwrite(objectPrefix.str() + "_dark_mask.png", spotDebug.darkMask);
+            diagnosticCsv << diagnosticObjectIndex << ',' << det.classId << ',' << label_name << ','
+                          << det.confidence << ',' << det.cx << ',' << det.cy << ','
+                          << det.w << ',' << det.h;
+            for (int scoreIndex = 0; scoreIndex < 6; ++scoreIndex) {
+                diagnosticCsv << ',' << (scoreIndex < static_cast<int>(det.classScores.size())
+                    ? det.classScores[scoreIndex] : 0.0f);
+            }
+            diagnosticCsv << ',' << static_cast<int>(info.fruitType) << ','
+                          << static_cast<int>(info.freshness) << ',' << darkRatio << ','
+                          << spotDebug.meanV << ',' << spotDebug.darkThreshold << ','
+                          << spotDebug.fruitPixels << ',' << spotDebug.darkPixels << ','
+                          << acceptedRect.x << ',' << acceptedRect.y << ','
+                          << acceptedRect.width << ',' << acceptedRect.height << '\n';
+            if (!annotatedFrame.empty()) {
+                cv::rectangle(annotatedFrame, acceptedRect,
+                              info.freshness == FreshnessLevel::Rotten
+                                  ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0), 2);
+                std::ostringstream label;
+                label << static_cast<int>(info.fruitType) << " F="
+                      << static_cast<int>(info.freshness) << " dark="
+                      << std::fixed << std::setprecision(3) << std::max(0.0f, darkRatio);
+                cv::putText(annotatedFrame, label.str(),
+                            cv::Point(acceptedRect.x, std::max(15, acceptedRect.y - 4)),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(20, 20, 255), 1);
+            }
+            ++diagnosticObjectIndex;
+        }
 
         // NMS logic
         for (size_t j = i + 1; j < detections.size(); ++j) {
@@ -1548,7 +1637,7 @@ static std::vector<FruitInfo> PostProcessYOLO(
     std::vector<cv::Rect> resultRects = acceptedFruitRects;
     if (bagBaseline != nullptr && !bagBaseline->empty()) {
         auto bagCandidates = DetectWhiteBagsFromStartupBaseline(
-            frame, *bagBaseline, acceptedFruitRects);
+            frame, *bagBaseline, acceptedFruitRects, diagnosticPrefix);
         for (const auto& candidate : bagCandidates) {
             CalibratedLocation location = ToCalibratedLocation(
                 candidate.rect.x + candidate.rect.width * 0.5f,
@@ -1561,7 +1650,27 @@ static std::vector<FruitInfo> PostProcessYOLO(
             SetCalibratedBox(bagInfo, candidate.rect);
             results.push_back(bagInfo);
             resultRects.push_back(candidate.rect);
+            if (!diagnosticPrefix.empty()) {
+                diagnosticCsv << diagnosticObjectIndex << ",-1,plastic_bag," << candidate.score
+                              << ',' << candidate.rect.x + candidate.rect.width * 0.5f
+                              << ',' << candidate.rect.y + candidate.rect.height * 0.5f
+                              << ',' << candidate.rect.width << ',' << candidate.rect.height
+                              << ",0,0,0,0,0,0"
+                              << ',' << static_cast<int>(FruitType::PlasticBag) << ",0,-1,0,0,0,0,"
+                              << candidate.rect.x << ',' << candidate.rect.y << ','
+                              << candidate.rect.width << ',' << candidate.rect.height << '\n';
+                if (!annotatedFrame.empty()) {
+                    cv::rectangle(annotatedFrame, candidate.rect, cv::Scalar(255, 0, 255), 3);
+                    cv::putText(annotatedFrame, "PlasticBag",
+                                cv::Point(candidate.rect.x, std::max(15, candidate.rect.y - 4)),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 255), 1);
+                }
+                ++diagnosticObjectIndex;
+            }
         }
+    }
+    if (!diagnosticPrefix.empty() && !annotatedFrame.empty()) {
+        cv::imwrite(diagnosticPrefix + "_annotated.jpg", annotatedFrame);
     }
     if (outputRects != nullptr) *outputRects = resultRects;
     return results;
@@ -1597,6 +1706,37 @@ void CvModelManager::StaticRecognitionInternal() {
     float confirmRatio = ConfigManager::GetInstance().GetFloat("cv.static_track_confirm_ratio", 0.70f);
     int successfulDetections = 0;
     auto startTime = std::chrono::steady_clock::now();
+    bool diagnosticEnabled = ConfigManager::GetInstance().GetBool(
+        "cv.diagnostic_capture_enable", true);
+    std::string diagnosticRunDir;
+    if (diagnosticEnabled) {
+        diagnosticRunDir = ConfigManager::GetInstance().GetString(
+            "cv.diagnostic_capture_root", "logs/recognition_debug")
+            + "/run_" + std::to_string(result.timestamp);
+        std::error_code error;
+        std::filesystem::create_directories(diagnosticRunDir, error);
+        if (error) {
+            LOG_PRINT("[CvModel]", "Diagnostic directory failed: " << error.message());
+            diagnosticRunDir.clear();
+        } else {
+            std::ofstream metadata(diagnosticRunDir + "/metadata.txt", std::ios::trunc);
+            metadata << "run_id=" << result.timestamp << '\n'
+                     << "target_frames=" << targetFrames << '\n'
+                     << "min_valid_frames=" << minValidFrames << '\n'
+                     << "confirm_ratio=" << confirmRatio << '\n'
+                     << "raw=frame_NN_raw.jpg\n"
+                     << "annotated=frame_NN_annotated.jpg\n"
+                     << "detections=frame_NN_detections.csv\n"
+                     << "dark_masks=frame_NN_object_XX_*_mask.png\n"
+                     << "bag_masks=frame_NN_bag_*.png\n"
+                     << "weights=weight.csv\n";
+            if (!mStartupBagBaseline.empty()) {
+                cv::imwrite(diagnosticRunDir + "/startup_baseline.jpg", mStartupBagBaseline);
+            }
+            LOG_PRINT("[CvModel]", "DiagnosticRun run_id=" << result.timestamp
+                      << " dir=" << diagnosticRunDir);
+        }
+    }
 
     for (int attempt = 0; attempt < maxAttempts && successfulDetections < targetFrames; ++attempt) {
         if (!IsStaticRecognitionSwitchOn()) {
@@ -1613,10 +1753,22 @@ void CvModelManager::StaticRecognitionInternal() {
         if (mInferenceEngine) {
             std::vector<float> rawOutput;
             if (mInferenceEngine->Infer(frame, rawOutput)) {
+                std::string diagnosticPrefix;
+                if (!diagnosticRunDir.empty()) {
+                    std::ostringstream frameName;
+                    frameName << diagnosticRunDir << "/frame_"
+                              << std::setw(2) << std::setfill('0') << successfulDetections;
+                    diagnosticPrefix = frameName.str();
+                    cv::imwrite(diagnosticPrefix + "_raw.jpg", frame);
+                    LOG_PRINT("[CvModel]", "DiagnosticFrame run_id=" << result.timestamp
+                              << " frame_id=" << successfulDetections
+                              << " raw=" << diagnosticPrefix << "_raw.jpg");
+                }
                 std::vector<cv::Rect> detectionRects;
                 auto detections = PostProcessYOLO(frame, rawOutput,
                                                   mInferenceEngine->GetOutputDims(), -1.0f, -1.0f,
-                                                  &mStartupBagBaseline, &detectionRects);
+                                                  &mStartupBagBaseline, &detectionRects,
+                                                  diagnosticPrefix);
                 std::vector<bool> used(fruitCandidates.size(), false);
                 for (size_t detectionSlot = 0; detectionSlot < detections.size(); ++detectionSlot) {
                     const auto& det = detections[detectionSlot];
@@ -1734,6 +1886,20 @@ void CvModelManager::StaticRecognitionInternal() {
     result.fruitCount = std::min(static_cast<uint8_t>(finalDetections.size()), kMaxStaticFruitCount);
     for (uint8_t i = 0; i < result.fruitCount; ++i) {
         result.fruits[i] = finalDetections[i];
+    }
+    if (!diagnosticRunDir.empty()) {
+        std::ofstream summary(diagnosticRunDir + "/final_result.csv", std::ios::trunc);
+        summary << "index,type,freshness,location_x,location_y,box_x,box_y,box_width,box_height\n";
+        for (uint8_t i = 0; i < result.fruitCount; ++i) {
+            const auto& fruit = result.fruits[i];
+            summary << static_cast<int>(i) << ',' << static_cast<int>(fruit.fruitType) << ','
+                    << static_cast<int>(fruit.freshness) << ','
+                    << static_cast<int>(fruit.locationX) << ','
+                    << static_cast<int>(fruit.locationY) << ','
+                    << static_cast<int>(fruit.boxX) << ',' << static_cast<int>(fruit.boxY) << ','
+                    << static_cast<int>(fruit.boxWidth) << ','
+                    << static_cast<int>(fruit.boxHeight) << '\n';
+        }
     }
 
     {

@@ -194,6 +194,8 @@ ConfigManager::ConfigManager() {
     mConfig["cv.weight_move_net_tolerance_g"] = "5";
     mConfig["cv.weight_move_symmetry_min"] = "0.75";
     mConfig["cv.bag_weight_vs_fruit_ratio"] = "1.05";
+    mConfig["cv.diagnostic_capture_enable"] = "1";
+    mConfig["cv.diagnostic_capture_root"] = "logs/recognition_debug";
 
     // 摄像头配置
     mConfig["camera.index"] = "0";
